@@ -50,13 +50,14 @@ library only (no `/docs` page). `run_ml_api_local.bat` switches to it automatica
 
 The files in this folder are a complete web service. Step-by-step guide: `ML_API_SETUP.md` in the project folder.
 
-- **Vercel (free, recommended):** put these files in their own GitHub repository, then on vercel.com
-  *Add New → Project → Import* that repository and press *Deploy*. Vercel finds `app.py` and its `app` on its own.
+- **Vercel (live now):** https://aquatrace-ml-api.vercel.app (check `/health`). Vercel project `aquatrace-ml-api`,
+  linked to GitHub `tansoonseng2710/Aquatrace`, **Root Directory = `ml_api`**. `vercel.json` here tells Vercel to run
+  `app.py` as one Python function for every path. Every push to `main` redeploys it in about 10 seconds.
 - **Render (free, sleeps after 15 min without visitors):** *New → Web Service*, pick the repository;
   Render builds the `Dockerfile`. Choose the Free instance.
 - **Any Docker host:** the `Dockerfile` listens on `$PORT` (default 7860).
 
 ## Update the model
 
-Re-run the Colab notebook, then replace `aquatrace_colab_model.json` here (and in the online repository) with the new one.
+Re-run the Colab notebook, then replace `aquatrace_colab_model.json` here with the new one and push to `main`: Vercel redeploys the online API.
 The website loads the model from this service, so the website itself does not need to change.
