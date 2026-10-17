@@ -1,4 +1,6 @@
-# Vercel hosts only the dashboard (frontend/). The API, firmware and tools run elsewhere.
+# For a website deployment from the repository root, Vercel serves only frontend/.
+# ml_api/ is deliberately NOT listed: the aquatrace-ml-api Vercel project builds from
+# that folder (Root Directory = ml_api), and ignoring it here leaves that deployment empty (404).
 backend/
 firmware/
 tools/
@@ -9,7 +11,6 @@ frontend/build.sh
 Dockerfile
 docker-compose.yml
 .env*
-ml_api/
 colab/
 .venv_ml_api/
 *.bat
