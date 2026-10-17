@@ -1,0 +1,51 @@
+# Full stack: API + dashboard, PostgreSQL, MQTT broker.
+#
+#   cp .env.example .env        # then edit keys and passwords
+#   docker compose up -d --build
+#   docker compose exec api python -m app.seed --demo --days 7    # optional synthetic demo data
+#
+# Dashboard: http://<server>:8000   API docs: http://<server>:8000/docs
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aquatrace
+      POSTGRES_USER: aquatrace
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aquatrace"]
+      interval: 10s
+      retries: 5
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./deploy/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://aquatrace:${POSTGRES_PASSWORD:-change-me}@db:5432/aquatrace
+      MQTT_HOST: mqtt
+      MODEL_DIR: /data/models
+    ports:
+      - "8000:8000"
+    volumes:
+      - models:/data/models
+
+volumes:
+  pgdata:
+  models:

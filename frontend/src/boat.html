@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f6b80">
+<title>AquaTrace Boat Transmitter</title>
+<meta name="description" content="Turns this phone into a demonstration sensor boat for the AquaTrace river monitor.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600;700&family=Atkinson+Hyperlegible+Mono:wght@500&display=swap">
+<script src="vendor/mqtt.min.js"></script>
+<style>
+/* Layout: one thumb-reachable column. Big start and discharge buttons, then position and readings, settings folded away. */
+:root{
+  color-scheme:light;
+  --bg:#f4f7f7; --panel:#ffffff; --panel-2:#f0f4f4; --line:#dce3e4;
+  --fg:#16252a; --fg-2:#4a5a60; --fg-3:#6f7f84;
+  --accent:#0f6b80; --accent-soft:#e0eff2; --accent-fg:#ffffff;
+  --ok:#1b7a4a; --ok-soft:#e1f3e8; --warn:#8a5a00; --warn-soft:#fbf1d2; --bad:#b42318; --bad-soft:#fde4e1; --bad-fg:#ffffff;
+  --f-body:"Atkinson Hyperlegible Next","Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-mono:"Atkinson Hyperlegible Mono",ui-monospace,Menlo,Consolas,monospace;
+  --r:12px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  color-scheme:dark; --bg:#0f1719; --panel:#162125; --panel-2:#1b282d; --line:#2a3a40; --fg:#e5eced; --fg-2:#aab8bc; --fg-3:#83959a;
+  --accent:#5fb4c8; --accent-soft:#17353d; --accent-fg:#08171b; --ok:#5cc48d; --ok-soft:#163427; --warn:#e6b84a; --warn-soft:#352c14; --bad:#f07a6e; --bad-soft:#3f1f1c; --bad-fg:#1a0806;}}
+:root[data-theme="dark"]{
+  color-scheme:dark; --bg:#0f1719; --panel:#162125; --panel-2:#1b282d; --line:#2a3a40; --fg:#e5eced; --fg-2:#aab8bc; --fg-3:#83959a;
+  --accent:#5fb4c8; --accent-soft:#17353d; --accent-fg:#08171b; --ok:#5cc48d; --ok-soft:#163427; --warn:#e6b84a; --warn-soft:#352c14; --bad:#f07a6e; --bad-soft:#3f1f1c; --bad-fg:#1a0806;}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{min-height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:560px;margin:0 auto;padding-inline:16px;padding-block:calc(14px + env(safe-area-inset-top,0px)) calc(28px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:14px}
+header{display:flex;align-items:center;gap:10px}
+.mark{width:34px;height:34px;border-radius:10px;background:var(--accent);display:grid;place-items:center;color:var(--accent-fg);flex:none}
+.mark svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round}
+header b{display:block;font-size:17px;line-height:1.2} header span{display:block;font-size:13px;color:var(--fg-3)}
+header .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;padding:4px 10px;border-radius:99px;background:var(--panel-2);color:var(--fg-2);white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:12px}
+h2{font-size:15px;margin:0;color:var(--fg-2);font-weight:600}
+.big{font-size:22px;font-weight:700;line-height:1.25}
+.muted{color:var(--fg-2)} .tiny{font-size:13px;color:var(--fg-3)}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;min-height:44px}
+.btn.block{width:100%;min-height:56px;font-size:18px}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.btn.stop{background:var(--panel);border-color:var(--fg-3);color:var(--fg)}
+.btn.dis{background:var(--bad);border-color:var(--bad);color:var(--bad-fg)}
+.btn.dis.on{background:var(--bad-soft);color:var(--bad)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.seg{display:flex;background:var(--panel-2);border-radius:10px;padding:3px;gap:3px}
+.seg button{flex:1;border:0;background:transparent;padding:9px 6px;border-radius:8px;font-weight:600;font-size:14px;color:var(--fg-2);cursor:pointer;min-height:40px}
+.seg button.on{background:var(--panel);color:var(--fg);box-shadow:0 0 0 1px var(--line)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.rd{background:var(--panel-2);border-radius:10px;padding:8px 12px;display:flex;flex-direction:column}
+.rd span{font-size:13px;color:var(--fg-2)} .rd b{font-size:20px;font-variant-numeric:tabular-nums} .rd small{font-size:12px;color:var(--fg-3);font-weight:500;margin-left:3px}
+.rd.hi{background:var(--bad-soft)} .rd.hi b{color:var(--bad)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px;font-variant-numeric:tabular-nums} .kv dt{color:var(--fg-3)} .kv dd{margin:0}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:600;color:var(--fg-2)}
+input[type=text],input[type=url],select{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:16px;width:100%;min-width:0}
+.chk{display:flex;gap:10px;align-items:center;font-size:15px}
+.chk input{width:20px;height:20px;accent-color:var(--accent)}
+details{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 16px}
+details summary{cursor:pointer;font-weight:700;min-height:28px}
+details[open] summary{margin-bottom:12px}
+.stack{display:flex;flex-direction:column;gap:12px}
+.code{font-family:var(--f-mono);letter-spacing:.12em;font-size:17px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.msg{font-size:14px;border-radius:10px;padding:10px 12px;background:var(--warn-soft);color:var(--warn)}
+.msg.bad{background:var(--bad-soft);color:var(--bad)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14.5c2 0 2-2 4.5-2s2.5 2 4.5 2 2-2 4.5-2 2.5 2 4.5 2"/><path d="M3 9.5c2 0 2-2 4.5-2s2.5 2 4.5 2 2-2 4.5-2 2.5 2 4.5 2"/></svg></span>
+    <div><b>AquaTrace boat</b><span>Phone transmitter</span></div>
+    <span class="sp"></span>
+    <span class="pill" id="conn"><span class="dot"></span>Not connected</span>
+  </header>
+
+  <div class="msg" id="msg" hidden></div>
+
+  <section class="card">
+    <h2>This boat</h2>
+    <label class="f">Boat name<input type="text" id="name" autocomplete="off"></label>
+    <div class="row tiny"><span>Fleet code</span><b class="code" id="codeShow"></b><span>· ID <span id="devShow"></span></span></div>
+    <div class="big" id="state">Not sending yet</div>
+    <div class="tiny" id="stateSub">Tap Start sending. Your position and simulated sensor readings will go to the dashboard.</div>
+    <button class="btn pri block" type="button" id="startBtn">Start sending</button>
+    <button class="btn dis block" type="button" id="disBtn" disabled>Simulate discharge</button>
+    <div class="tiny">A discharge raises the simulated pollution load near this phone for two minutes, the way a sewage or drain release would.</div>
+  </section>
+
+  <section class="card">
+    <h2>Position</h2>
+    <div class="seg" id="modeSeg" role="group" aria-label="Position source">
+      <button type="button" data-m="gps">Phone GPS</button><button type="button" data-m="relative">On Penang map</button><button type="button" data-m="route">Simulated route</button>
+    </div>
+    <div class="tiny" id="modeHelp"></div>
+    <dl class="kv" id="pos"><dt>Position</dt><dd>Waiting</dd></dl>
+  </section>
+
+  <section class="card">
+    <h2>Readings sent</h2>
+    <div class="grid" id="readings"></div>
+    <div class="tiny">Sensor values are simulated on this phone. They respond to the discharge button and to known pollution sources when the boat is on the Penang map.</div>
+  </section>
+
+  <details id="settings">
+    <summary>Connection and settings</summary>
+    <div class="stack">
+      <label class="f">Send readings through
+        <select id="transport"><option value="mqtt">Public message broker (demo)</option><option value="server">AquaTrace server</option></select></label>
+      <div id="mqttBox" class="stack">
+        <label class="f">Fleet code (shown on the dashboard)<input type="text" id="code" autocomplete="off" autocapitalize="characters"></label>
+        <label class="f">Broker
+          <select id="broker"><option value="emqx">EMQX public broker</option><option value="hivemq">HiveMQ public broker</option><option value="mosquitto">Eclipse Mosquitto test broker</option><option value="custom">Custom address</option></select></label>
+        <label class="f" id="brokerUrlWrap">Broker address<input type="url" id="brokerUrl" placeholder="wss://broker.example.org:8084/mqtt"></label>
+      </div>
+      <div id="serverBox" class="stack">
+        <label class="f">Server API address<input type="url" id="apiUrl" placeholder="https://monitor.example.org/api"></label>
+        <label class="f">Device key<input type="text" id="apiKey" autocomplete="off"></label>
+      </div>
+      <label class="f">Send every
+        <select id="interval"><option value="2">2 seconds</option><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="30">30 seconds</option></select></label>
+      <label class="chk"><input type="checkbox" id="wake" checked> Keep the screen on while sending</label>
+      <div class="row"><button class="btn" type="button" id="dlTrip">Download this trip</button><button class="btn" type="button" id="clearTrip">Clear trip</button><span class="tiny" id="tripInfo"></span></div>
+      <div class="tiny">The trip file can be replayed on the dashboard's Fishing fleet page when there is no phone or network at a venue.</div>
+    </div>
+  </details>
+  <div class="tiny">Public brokers are free test services: anyone with the fleet code can see these readings. Use them for demonstrations only.</div>
+</div>

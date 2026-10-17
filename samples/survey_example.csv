@@ -1,0 +1,5 @@
+respondent_id,disposal_method,awareness,convenience,uncertainty,habit,no_followup,leftover
+P001,Household rubbish bin,4,5,3,4,2,5
+P002,Returned to pharmacy / clinic,2,2,1,1,1,3
+P003,Sink or toilet,5,4,5,3,4,4
+P004,Kept at home,3,3,4,2,3,5

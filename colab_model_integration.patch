@@ -1,0 +1,221 @@
+diff --git a/frontend/src/body.html b/frontend/src/body.html
+index cac6c92..d8b1516 100644
+--- a/frontend/src/body.html
++++ b/frontend/src/body.html
+@@ -198,7 +198,7 @@
+     <div class="vh"><div><h1>Lab results</h1><p>Add laboratory results from a file or by hand. Each sample is paired with the sensor readings taken nearest to it in time and place, and those pairs train the model.</p></div></div>
+     <div class="grid g2">
+       <div class="panel"><h2>Upload CSV</h2>
+-        <div class="flowrow"><input type="file" id="hplcFile" accept=".csv,text/csv"><button class="btn sm" type="button" id="hplcTplBtn">Copy template</button></div>
++        <div class="flowrow"><input type="file" id="hplcFile" accept=".csv,text/csv"><button class="btn sm" type="button" id="hplcTplBtn">Copy template</button><button class="btn sm" type="button" id="hplcDemoBtn">Held-out US lab results</button></div>
+         <textarea id="hplcPaste" placeholder="…or paste CSV here"></textarea>
+         <div class="flowrow"><button class="btn lab" type="button" id="hplcImport">Import results</button><span class="small muted" id="hplcMsg"></span></div>
+         <div class="tiny">Columns: <code>sample_id, timestamp, lat, lon, compound, concentration, unit, lod, method, notes</code>. Units ng/L, µg/L or mg/L are converted. Values below LOD may be written as <code>&lt;LOD</code>; they are stored as LOD/2 and flagged. Sensor columns (<code>ph, orp, turbidity, uv, temp, conductivity, do</code>) are optional: if present they are used directly instead of matching.</div>
+@@ -225,8 +225,11 @@
+         </div>
+       </div>
+     </div>
++    <div class="panel" id="xcPanel" hidden><div class="ph"><h2>Cross-check: model vs lab</h2><span class="tools tiny" id="xcNote"></span></div>
++      <div class="small muted">For every lab result, the Colab model screens only the sensor readings taken with that sample, without seeing the lab value. Then the two are compared. Hit rate = flagged samples that were truly high; lift = hit rate ÷ share of high samples; caught = share of high samples the model flagged. "AUC Colab" was reported when the model was built; "AUC site" is computed here, live, on the same held-out samples.</div>
++      <div class="tw"><table><thead><tr><th>Model</th><th class="n">Checked</th><th class="n">Lab high</th><th class="n">Flagged</th><th class="n">Hit rate</th><th class="n">Lift</th><th class="n">Caught</th><th class="n">Agree</th><th class="n">AUC site</th><th class="n">AUC Colab</th><th class="n">Level ±2×</th></tr></thead><tbody id="xcTable"></tbody></table></div></div>
+     <div class="panel"><div class="ph"><h2>Laboratory results</h2><div class="tools"><select id="hplcFilter"></select><span class="small muted" id="hplcCount"></span></div></div>
+-      <div class="tw"><table><thead><tr><th>Sample</th><th>Sampled</th><th>Compound</th><th class="n">Conc.</th><th>Flag</th><th>Match</th><th class="n">Δt</th><th class="n">Dist.</th><th class="n">pH</th><th class="n">ORP</th><th class="n">Turb.</th><th class="n">UV</th><th class="n">Est.</th></tr></thead><tbody id="hplcTable"></tbody></table></div>
++      <div class="tw"><table><thead><tr><th>Sample</th><th>Sampled</th><th>Compound</th><th class="n">Conc.</th><th class="n">Est.</th><th>Model check</th><th>Flag</th><th>Match</th><th class="n">Δt</th><th class="n">Dist.</th><th class="n">pH</th><th class="n">ORP</th><th class="n">Turb.</th><th class="n">UV</th></tr></thead><tbody id="hplcTable"></tbody></table></div>
+     </div>
+   </section>
+ 
+@@ -236,7 +239,9 @@
+       <div class="tools">
+         <label class="f">Pollutant<select id="mlComp"></select></label>
+         <label class="f">Model<select id="mlModel"><option value="rf">Random forest</option><option value="ridge">Ridge regression</option></select></label>
+-        <button class="btn pri" type="button" id="mlTrain">Train model</button></div></div>
++        <button class="btn pri" type="button" id="mlTrain">Train model</button>
++        <button class="btn sm" type="button" id="mlPkgDemo">Load Colab model</button>
++        <label class="btn sm">Model file…<input type="file" id="mlPkgFile" accept=".json,application/json" hidden></label></div></div>
+     <div class="panel"><div class="ph"><h2>Inputs</h2><span class="tools tiny" id="mlN"></span></div><div class="flowrow" id="mlFeat"></div></div>
+     <div class="kv" id="mlMetrics"></div>
+     <div class="grid g2">
+diff --git a/frontend/src/ml.js b/frontend/src/ml.js
+index 496ea4c..ababe00 100644
+--- a/frontend/src/ml.js
++++ b/frontend/src/ml.js
+@@ -75,6 +75,15 @@ function trainModel(comp, type, feats){
+   return res;
+ }
+ function predictWithUncertainty(m, x){
++  if(m.external){   // Colab model: level in log space, plus a screening probability
++    const lg=m.final.logs(x), ml=mean(lg), sp=sd(lg), s=Math.sqrt(sp*sp+m.rmseLog*m.rmseLog);
++    const mu=Math.pow(10,ml)*m.fac, lo=Math.pow(10,ml-1.96*s)*m.fac, hi=Math.pow(10,ml+1.96*s)*m.fac;
++    const p=m.final.screen(x), flag=p>=m.pThr;
++    const outside=m.feats.filter((f,j)=>{ const [a,b]=m.ranges[j]; const pad=0.1*(b-a||Math.abs(a)*0.1||1); return x[j]<a-pad || x[j]>b+pad; });
++    const auc=m.screenHold?.auc ?? 0; let conf=auc>=0.85?'High':auc>=0.7?'Medium':'Low'; const reasons=[`screening AUC on held-out sites is ${auc.toFixed(2)}`];
++    if(outside.length){ conf='Low'; reasons.push('outside calibration range: '+outside.map(f=>PARAMS[f]?.short||PARAMS[f]?.label||f).join(', ')); }
++    return {mu, lo, hi, conf, reasons, outside, p, flag};
++  }
+   const mu = Math.max(0, m.final.predict(x)); const sp = m.final.spread(x);
+   const hw = 1.96*Math.sqrt(sp*sp + m.rmse*m.rmse);
+   const outside = m.feats.filter((f,j)=>{ const [a,b]=m.ranges[j]; const pad=0.1*(b-a||Math.abs(a)*0.1||1); return x[j]<a-pad || x[j]>b+pad; });
+@@ -88,3 +97,48 @@ function predictWithUncertainty(m, x){
+   return {mu, lo:Math.max(0,mu-hw), hi:mu+hw, conf, reasons, outside};
+ }
+ function trainAll(){ for(const c of Object.keys(S.compounds)){ const r=trainModel(c, c===CFG.target? (S.models[c]?.type||'rf') : 'rf', S.models[c]?.feats || CFG.feats); S.models[c] = r.error? null : r; } }
++
++/* ---------- models trained outside the browser (Google Colab model packages) ---------- */
++// Trees arrive as arrays: [feature, threshold, left, right] for a split, [value] for a leaf.
++// Split rule matches scikit-learn: x <= threshold goes left, with x rounded to 32-bit first (scikit-learn stores inputs as float32).
++function treeFromArrays(nodes){ const mk=i=>{ const n=nodes[i]; return n.length===1?{v:n[0]}:{f:n[0],t:n[1],l:mk(n[2]),r:mk(n[3])}; }; return mk(0); }
++function loadModelPackage(pkg){
++  if(!pkg || !pkg.models || !/^aquatrace-model-package\//.test(pkg.format||'')) throw new Error('This file is not an AquaTrace model package.');
++  for(const c of (pkg.compounds||[])) S.compounds[c.id]={...c, external:true};
++  const loaded=[];
++  for(const [id,p] of Object.entries(pkg.models)){
++    if(!S.compounds[id]) S.compounds[id]={id, name:p.name, unit:p.unit, level:p.threshold, cls:'', cas:'', external:true};
++    const ct=p.clf_trees.map(treeFromArrays), rt=p.reg_trees.map(treeFromArrays);
++    const fac=p.ng_to_unit ?? (p.threshold/p.threshold_ngL);
++    const f32=x=>x.map(v=>Math.fround(v));
++    const logs=x=>{ const z=f32(x); return rt.map(t=>treePred(t,z)); };
++    const final={ logs, predict:x=>Math.pow(10,mean(logs(x)))*fac, spread:x=>sd(logs(x)), screen:x=>{ const z=f32(x); return mean(ct.map(t=>treePred(t,z))); } };
++    S.models[id]={comp:id, type:'rf', external:true, pkgSource:pkg.source, pkgCreated:pkg.created, feats:p.feats, n:p.n, nDetected:p.n_detected,
++      nSites:p.n_sites, nHold:p.n_holdout, nHoldSites:p.n_holdout_sites, r2:p.level.r2_log_cv, rmseLog:p.level.rmse_log_cv, rmse:p.level.rmse_log_cv,
++      mae:null, fitR2:null, r2UV:null, bias:0, fac, threshold:p.threshold, thresholdNg:p.threshold_ngL, pThr:p.p_threshold,
++      screenCV:p.screen_cv, screenHold:p.screen_holdout, level:p.level, importance:p.importance, corr:p.corr, ranges:p.ranges,
++      oof:p.oof, yMax:Math.max(...p.oof.map(o=>o.y)), final, trainedAt:Date.parse(pkg.created)||Date.now()};
++    loaded.push(id);
++  }
++  return loaded;
++}
++// One lab result checked against the model, which sees only the sensor readings taken with the sample.
++function crossCheckOne(h, m){
++  const s=h.match&&h.match.ok? h.match.sensors : null; if(!s) return null;
++  const x=featVec(s, m.feats); if(!x.every(v=>v!=null && isFinite(v))) return null;
++  const p=m.final.screen(x), flag=p>=m.pThr, labHigh=!h.below && h.conc>=m.threshold;
++  const est=m.final.predict(x);
++  return {p, flag, labHigh, est, verdict: flag===labHigh ? (labHigh?'both high':'both low') : (labHigh?'missed high':'false alarm')};
++}
++function crossCheckSummary(comp){
++  const m=S.models[comp]; if(!m||!m.external) return null;
++  const rows=S.hplc.filter(h=>h.compound===comp).map(h=>({h, c:crossCheckOne(h,m)})).filter(r=>r.c);
++  if(!rows.length) return {comp, n:0};
++  const n=rows.length, high=rows.filter(r=>r.c.labHigh).length, flagged=rows.filter(r=>r.c.flag).length, tp=rows.filter(r=>r.c.flag&&r.c.labHigh).length;
++  const agree=rows.filter(r=>r.c.flag===r.c.labHigh).length;
++  const det=rows.filter(r=>!r.h.below), w2=det.filter(r=>Math.abs(Math.log10(r.c.est/r.h.conc))<=Math.log10(2)).length;
++  // AUC: share of (high, low) pairs where the high sample got the higher screening score
++  const ph=rows.filter(r=>r.c.labHigh).map(r=>r.c.p), pl=rows.filter(r=>!r.c.labHigh).map(r=>r.c.p).sort((a,b)=>a-b);
++  let auc=null; if(ph.length&&pl.length){ let s=0; for(const v of ph){ let lo=0,hi=pl.length; while(lo<hi){const mid=(lo+hi)>>1; if(pl[mid]<v) lo=mid+1; else hi=mid;} let eq=lo; while(eq<pl.length&&pl[eq]===v) eq++; s+=lo+(eq-lo)/2; } auc=s/(ph.length*pl.length); }
++  return {comp, n, high, flagged, tp, agree:agree/n, hit:flagged?tp/flagged:null, base:high/n, caught:high?tp/high:null, within2x:det.length?w2/det.length:null, nDet:det.length, auc};
++}
+diff --git a/frontend/src/ui.js b/frontend/src/ui.js
+index a4db591..05df30a 100644
+--- a/frontend/src/ui.js
++++ b/frontend/src/ui.js
+@@ -273,7 +273,7 @@ function importHPLC(text){
+     else { v=convert(parseFloat(row.concentration), unit, comp); if(v==null||!isFinite(v)) return errs.push(`Row ${line}: concentration or unit "${unit}" not recognised.`); }
+     const h={id:`${row.sample_id||'U'+Date.now()}-${comp}-${ts}`, sample_id:row.sample_id||'(no id)', ts, lat, lon, compound:comp, conc:+v.toPrecision(5), lod, below, method:row.method||'', notes:row.notes||'', origin:'upload'};
+     const sens={}; let has=false; for(const k of Object.keys(PARAMS)){ if(row[k]!==undefined && row[k]!==''){ sens[k]=+row[k]; has=true; } }
+-    if(has && Object.keys(PARAMS).every(k=>k in sens)) h.sensors=sens;
++    if(has){ h.sensors=sens; if(!Object.keys(PARAMS).every(k=>k in sens)) h.sensorsPartial=true; }
+     ok.push(h);
+   });
+   return {ok, errs};
+@@ -289,13 +289,19 @@ function renderHPLC(full){
+   const matched=rows.filter(h=>h.match?.ok).length;
+   $('#hplcCount').textContent=`${rows.length} results · ${matched} matched to sensor data`;
+   $('#hplcTable').innerHTML=rows.map(h=>{ const m=h.match||{}; const s=m.sensors||{}; const mdl=S.models[h.compound];
+-    const est = m.ok&&mdl ? mdl.final.predict(featVec({...s}, mdl.feats)) : null;
+-    return `<tr><td class="mono">${esc(h.sample_id)}</td><td>${fmtT(h.ts)}</td><td>${esc(compLabel(h.compound))}</td><td class="n">${fmtConc(h.conc,h.compound)}</td><td>${h.below?'<span class="pill warn">&lt;LOD</span>':''}${h.origin==='demo'?'<span class="pill">demo</span>':''}</td>
++    const xv = m.ok&&mdl ? featVec({...s}, mdl.feats) : null; const est = xv && xv.every(v=>v!=null&&isFinite(v)) ? mdl.final.predict(xv) : null;
++    const ck = mdl&&mdl.external ? crossCheckOne(h, mdl) : null;
++    return `<tr><td class="mono">${esc(h.sample_id)}</td><td>${fmtT(h.ts)}</td><td>${esc(compLabel(h.compound))}</td><td class="n">${fmtConc(h.conc,h.compound)}</td><td class="n">${est!=null?fmtConc(Math.max(0,est),h.compound):'–'}</td><td>${ck?`<span class="pill ${ck.flag===ck.labHigh?'ok':ck.labHigh?'bad':'warn'}" title="Screening probability ${(ck.p*100).toFixed(0)}%">${ck.flag===ck.labHigh?'✓ ':''}${ck.verdict}</span>`:''}</td><td>${h.below?'<span class="pill warn">&lt;LOD</span>':''}${h.origin==='demo'?'<span class="pill">demo</span>':''}</td>
+     <td>${m.ok?(m.direct?'<span class="pill acc">in file</span>':`<span class="pill ok">${m.n} rdg</span>`):'<span class="pill bad">none</span>'}</td><td class="n">${m.ok?fmtNum(m.dt,1)+' min':'–'}</td><td class="n">${m.ok?Math.round(m.dist)+' m':'–'}</td>
+-    <td class="n">${fmtNum(s.ph,2)}</td><td class="n">${fmtNum(s.orp,0)}</td><td class="n">${fmtNum(s.turbidity,1)}</td><td class="n">${fmtNum(s.uv,3)}</td><td class="n">${est!=null?fmtConc(Math.max(0,est),h.compound):'–'}</td></tr>`; }).join('');
++    <td class="n">${fmtNum(s.ph,2)}</td><td class="n">${fmtNum(s.orp,0)}</td><td class="n">${fmtNum(s.turbidity,1)}</td><td class="n">${fmtNum(s.uv,3)}</td></tr>`; }).join('');
++  renderCrossCheck();
+ }
+ $('#hplcFilter').addEventListener('change',()=>renderHPLC(false));
+ $('#hplcTplBtn').onclick=()=>copyText(HPLC_TPL,$('#hplcPaste'));
++$('#hplcDemoBtn').onclick=async()=>{ try{ if(!Object.values(S.models).some(m=>m&&m.external)) await loadBundledModel();
++  $('#hplcPaste').value=await getBundled('models/crosscheck_lab_results.csv','models/crosscheck_lab_results.js','AQUATRACE_CROSSCHECK_CSV',true); $('#hplcImport').click(); await new Promise(z=>setTimeout(z,50));
++  const first=Object.keys(S.models).find(c=>S.models[c]&&S.models[c].external&&S.hplc.some(h=>h.compound===c)); if(first){ $('#hplcFilter').value=first; renderHPLC(false); }
++  $('#xcPanel').scrollIntoView({behavior:'smooth'}); }catch(e){ toast('Could not load the cross-check file: '+e.message); } };
+ $('#hplcFile').addEventListener('change',e=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ $('#hplcPaste').value=rd.result; }; rd.readAsText(f); });
+ $('#hplcImport').onclick=async()=>{ const t=$('#hplcPaste').value; if(!t.trim()) return $('#hplcMsg').textContent='Choose a CSV file or paste CSV text first.';
+   const {ok,errs}=importHPLC(t); try{ if(ok.length) await addHPLC(ok); }catch(e){ return $('#hplcMsg').textContent='Server rejected the upload: '+e.message; }
+@@ -309,6 +315,37 @@ $('#hplcForm').addEventListener('submit',async e=>{ e.preventDefault(); const co
+ $('#hfNow').onclick=()=>{ const r=latest(); const d=new Date(r.ts); const pad=n=>String(n).padStart(2,'0'); $('#hfTs').value=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; $('#hfLat').value=r.lat; $('#hfLon').value=r.lon; if(!$('#hfId').value) $('#hfId').value='S-'+String(Math.floor(Math.random()*900+100)); };
+ $('#mRun').onclick=()=>{ CFG.matchWinMin=+$('#mWin').value||15; CFG.matchDistM=+$('#mDist').value||300; savePrefs(); matchAll(); renderHPLC(false); toast('Matching re-run. Retrain models to use the new pairs.'); };
+ 
++
++function renderCrossCheck(){
++  const comps=Object.keys(S.models).filter(c=>S.models[c]&&S.models[c].external);
++  const rows=comps.map(crossCheckSummary).filter(r=>r&&r.n);
++  $('#xcPanel').hidden=!rows.length; if(!rows.length) return;
++  const pct=v=>v==null?'–':(v*100).toFixed(0)+'%';
++  $('#xcTable').innerHTML=rows.map(r=>{ const m=S.models[r.comp]; const lift=r.hit!=null&&r.base?r.hit/r.base:null;
++    return `<tr><td><b>${esc(S.compounds[r.comp].name)}</b><div class="tiny">high = above ${fmtConc(m.threshold,r.comp)}</div></td><td class="n">${r.n}</td><td class="n">${r.high} <span class="tiny">(${pct(r.base)})</span></td><td class="n">${r.flagged}</td>
++      <td class="n"><b>${pct(r.hit)}</b></td><td class="n">${lift?lift.toFixed(1)+'×':'–'}</td><td class="n">${pct(r.caught)}</td><td class="n">${pct(r.agree)}</td><td class="n">${r.auc!=null?r.auc.toFixed(2):'–'}</td>
++      <td class="n">${m.screenHold?.auc!=null?m.screenHold.auc.toFixed(2):'–'}</td><td class="n">${pct(r.within2x)} <span class="tiny">of ${r.nDet}</span></td></tr>`; }).join('');
++  const tot=rows.reduce((a,r)=>({n:a.n+r.n, tp:a.tp+r.tp, f:a.f+r.flagged, h:a.h+r.high}),{n:0,tp:0,f:0,h:0});
++  $('#xcNote').textContent=`${tot.n} lab results checked · model flagged ${tot.f}, of which ${tot.tp} were truly high (${pct(tot.f?tot.tp/tot.f:null)}) vs ${pct(tot.h/tot.n)} if sampled at random`;
++}
++// Bundled files: fetch() when served by a web server; when index.html is opened by double-click (file://)
++// browsers block fetch, so fall back to the same data wrapped as a .js file loaded with a <script> tag.
++function loadScriptOnce(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('cannot load '+src)); document.head.appendChild(s); }); }
++async function getBundled(url, jsUrl, globalName, asText){
++  try{ const r=await fetch(url,{cache:'no-store'}); if(r.ok) return asText? await r.text() : await r.json(); }catch(e){}
++  if(window[globalName]==null) await loadScriptOnce(jsUrl);
++  if(window[globalName]==null) throw new Error('files not found in the models folder next to index.html');
++  return window[globalName];
++}
++async function loadBundledModel(){
++  return useModelPackage(await getBundled('models/aquatrace_colab_model.json','models/aquatrace_colab_model.js','AQUATRACE_MODEL',false));
++}
++function useModelPackage(pkg){
++  const ids=loadModelPackage(pkg); rescoreAll();
++  toast(`Loaded ${ids.length} Colab models (${ids.map(i=>S.compounds[i].name.replace(' (US model)','')).join(', ')})`);
++  renderView(true); return ids;
++}
++
+ /* ---------- 06 ML ---------- */
+ let mlFeats=null;
+ function renderML(full){
+@@ -323,25 +360,31 @@ function renderML(full){
+     ['mlPvm','mlScatter'].forEach(id=>{ if(CH[id]){CH[id].destroy(); delete CH[id];} }); $('#mlImp').innerHTML=''; $('#mlCorr').innerHTML=''; $('#mlNow').innerHTML=''; $('#mlAssess').textContent=''; $('#mlCard').textContent=''; return; }
+   const u=c.unit;
+   const r2c = v => v>=0.7?'ok':v>=0.5?'warn':'bad';
+-  $('#mlMetrics').innerHTML=`<div><span>Samples (n)</span><b>${m.n}</b></div><div><span>R² (5-fold CV)</span><b style="color:var(--${r2c(m.r2)})">${m.r2.toFixed(2)}</b></div><div><span>RMSE <span class="nu">(${esc(u)})</span></span><b>${fmtNum(m.rmse, m.rmse<0.1?3:2)}</b></div><div><span>MAE <span class="nu">(${esc(u)})</span></span><b>${fmtNum(m.mae, m.mae<0.1?3:2)}</b></div><div><span>UV-only R² (CV)</span><b>${m.r2UV!=null?m.r2UV.toFixed(2):'–'}</b></div><div><span>Training R²</span><b>${m.fitR2.toFixed(2)}</b></div>`;
+-  const mx=Math.max(m.yMax, ...m.oof.map(o=>o.yhat))*1.05;
+-  chart('mlPvm',{type:'scatter',data:{datasets:[{label:'Samples',data:m.oof.map(o=>({x:o.y,y:o.yhat,id:o.id})),pointBackgroundColor:m.oof.map(o=>o.below?css('--fg-3'):css('--lab')),pointRadius:4},{label:'1:1',type:'line',data:[{x:0,y:0},{x:mx,y:mx}],borderColor:css('--fg-3'),borderDash:[4,4],pointRadius:0,borderWidth:1}]},
+-    options:baseOpts({plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw.id?`${ctx.raw.id}: HPLC ${fmtConc(ctx.raw.x,comp)}, predicted ${fmtConc(ctx.raw.y,comp)}`:''}}},scales:{x:{min:0,max:mx,title:{display:true,text:`HPLC-measured (${u})`,color:css('--fg-2')},ticks:{color:css('--fg-2')},grid:{color:css('--line-2')}},y:{min:0,max:mx,title:{display:true,text:`Predicted (${u})`,color:css('--fg-2')},ticks:{color:css('--fg-2')},grid:{color:css('--line-2')}}}})});
++  if(m.external){ $$('#mlFeat input').forEach(i=>i.checked=m.feats.includes(i.value)); if(full) $('#mlScX').value=m.importance[0].f; }
++  if(m.external){ const sh=m.screenHold||{}, a=v=>v==null?'–':(v*100).toFixed(0)+'%';
++    $('#mlMetrics').innerHTML=`<div><span>Training samples</span><b>${m.n}</b><span class="tiny" style="display:block">${m.nSites} sites</span></div><div><span>Screening AUC <span class="nu">(held-out sites)</span></span><b style="color:var(--${r2c((sh.auc-0.5)*2.5)})">${sh.auc?.toFixed(2)??'–'}</b></div><div><span>Flagged that were really high</span><b>${a(sh.hit_rate)}</b><span class="tiny" style="display:block">vs ${a(sh.base_rate)} at random</span></div><div><span>High samples caught</span><b>${a(sh.caught_share)}</b></div><div><span>Level R² <span class="nu">(log, CV)</span></span><b style="color:var(--${r2c(m.level.r2_log_cv)})">${m.level.r2_log_cv.toFixed(2)}</b></div><div><span>Level within 2×</span><b>${a(m.level.within2x_cv)}</b></div>`; }
++  else $('#mlMetrics').innerHTML=`<div><span>Samples (n)</span><b>${m.n}</b></div><div><span>R² (5-fold CV)</span><b style="color:var(--${r2c(m.r2)})">${m.r2.toFixed(2)}</b></div><div><span>RMSE <span class="nu">(${esc(u)})</span></span><b>${fmtNum(m.rmse, m.rmse<0.1?3:2)}</b></div><div><span>MAE <span class="nu">(${esc(u)})</span></span><b>${fmtNum(m.mae, m.mae<0.1?3:2)}</b></div><div><span>UV-only R² (CV)</span><b>${m.r2UV!=null?m.r2UV.toFixed(2):'–'}</b></div><div><span>Training R²</span><b>${m.fitR2.toFixed(2)}</b></div>`;
++  const mx=Math.max(m.yMax, ...m.oof.map(o=>o.yhat))*1.05; const lg=!!m.external, mn=lg?Math.min(...m.oof.map(o=>Math.min(o.y,o.yhat)))*0.8:0;
++  chart('mlPvm',{type:'scatter',data:{datasets:[{label:'Samples',data:m.oof.map(o=>({x:o.y,y:o.yhat,id:o.id})),pointBackgroundColor:m.oof.map(o=>o.below?css('--fg-3'):css('--lab')),pointRadius:4},{label:'1:1',type:'line',data:[{x:mn,y:mn},{x:mx,y:mx}],borderColor:css('--fg-3'),borderDash:[4,4],pointRadius:0,borderWidth:1}]},
++    options:baseOpts({plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.raw.id?`${ctx.raw.id}: HPLC ${fmtConc(ctx.raw.x,comp)}, predicted ${fmtConc(ctx.raw.y,comp)}`:''}}},scales:{x:{type:lg?'logarithmic':'linear',min:mn,max:mx,title:{display:true,text:`${lg?'Lab-measured':'HPLC-measured'} (${u})${lg?', log scale':''}`,color:css('--fg-2')},ticks:{color:css('--fg-2')},grid:{color:css('--line-2')}},y:{type:lg?'logarithmic':'linear',min:mn,max:mx,title:{display:true,text:`Predicted (${u})`,color:css('--fg-2')},ticks:{color:css('--fg-2')},grid:{color:css('--line-2')}}}})});
+   const imax=Math.max(...m.importance.map(i=>i.v),1e-9);
+-  $('#mlImpNote').textContent='permutation, held-out folds';
++  $('#mlImpNote').textContent=m.external?'permutation, screening model, held-out sites':'permutation, held-out folds';
+   $('#mlImp').innerHTML=m.importance.map(i=>`<div class="r"><span>${esc(PARAMS[i.f]?.label||EXTRA_FEATS[i.f]||i.f)}</span><div class="track"><i style="left:0;width:${i.v/imax*100}%"></i></div><span class="v">${(i.v*100).toFixed(0)}%</span></div>`).join('');
+   $('#mlCorr').innerHTML=m.corr.map(k=>{ const w=Math.abs(k.r)*50; return `<div class="r"><span>${esc(PARAMS[k.f]?.short||PARAMS[k.f]?.label||EXTRA_FEATS[k.f]||k.f)}</span><div class="track"><span class="mid"></span><i class="${k.r<0?'neg':''}" style="left:${k.r<0?50-w:50}%;width:${w}%"></i></div><span class="v">${k.r>=0?'+':''}${k.r.toFixed(2)} / ${k.rho.toFixed(2)}</span></div>`; }).join('');
+   renderScatter();
+   const r=latest(); const e=r.est?.[comp];
+   const lab=P.slice().sort((a,b)=>b.ts-a.ts)[0];
+-  $('#mlNow').innerHTML= e? `<dt>Estimated ${esc(c.name.toLowerCase())}</dt><dd><span class="big">${fmtConc(e.mu,comp)}</span></dd><dt>95% interval</dt><dd>${fmtConc(e.lo,comp)} – ${fmtConc(e.hi,comp)}</dd><dt>Reference HPLC</dt><dd>${lab?`${fmtConc(lab.conc,comp)} <span class="tiny">latest, ${esc(lab.sample_id)} ${fmtT(lab.ts)}</span>`:'none'}</dd><dt>Model confidence</dt><dd><span class="pill ${e.conf==='High'?'ok':e.conf==='Medium'?'warn':'bad'}">${e.conf}</span></dd><dt>Status</dt><dd>${c.level!=null && e.mu>=c.level?'<span class="pill bad">Possible pharmaceutical contamination detected</span>':'<span class="pill ok">Below screening level</span>'}</dd><dt>Recommendation</dt><dd>${c.level!=null && e.mu>=c.level?'Confirm with laboratory analysis':'Continue monitoring; confirm periodically with HPLC'}</dd>`:'';
+-  $('#mlAssess').innerHTML=`<b>How to read this.</b> ${m.r2>=0.7?'Sensor combinations explain most of the variation in HPLC results for this dataset.':m.r2>=0.5?'Sensor combinations explain part of the variation; use estimates for screening only.':'Sensor signals explain little of the HPLC variation for this compound. Treat estimates as unreliable.'} ${m.r2UV!=null? (m.r2-m.r2UV>0.05?`The multivariable model adds ${((m.r2-m.r2UV)*100).toFixed(0)} points of R² over UV alone.`:'UV alone performs about as well as the full model.'):''} ${e&&e.reasons.length? 'Current reading: '+esc(e.reasons.join('; '))+'.':''}`;
+-  $('#mlCard').innerHTML=`Compound: ${esc(c.name)} (${esc(c.cas)}) · target unit ${esc(u)}<br>Algorithm: ${m.type==='rf'?'Random forest, 120 trees, max depth 7, min leaf 3, bootstrap':'Ridge regression on standardised inputs, λ = 1'}<br>Inputs: ${m.feats.map(f=>esc(PARAMS[f]?.label||EXTRA_FEATS[f]||f)).join(', ')}<br>Validation: 5-fold CV (shuffled, seed 1234). Uncertainty = 1.96·√(tree spread² + CV RMSE²).<br>Applicability domain: each input within training range ±10%.<br>Pairing: HPLC samples matched to readings within ±${CFG.matchWinMin} min and ${CFG.matchDistM} m (weighted average).<br>Values below LOD entered as LOD/2 (grey points).<br>Trained ${fmtT(m.trainedAt)}${S.serverModels[comp]?`<br>Server model: v${S.serverModels[comp].version}, CV R² ${S.serverModels[comp].r2_cv.toFixed(2)}`:''}`;
++  $('#mlNow').innerHTML= e? `<dt>Estimated ${esc(c.name.toLowerCase())}</dt><dd><span class="big">${fmtConc(e.mu,comp)}</span></dd><dt>95% interval</dt><dd>${fmtConc(e.lo,comp)} – ${fmtConc(e.hi,comp)}</dd><dt>Reference HPLC</dt><dd>${lab?`${fmtConc(lab.conc,comp)} <span class="tiny">latest, ${esc(lab.sample_id)} ${fmtT(lab.ts)}</span>`:'none'}</dd><dt>Model confidence</dt><dd><span class="pill ${e.conf==='High'?'ok':e.conf==='Medium'?'warn':'bad'}">${e.conf}</span></dd>${e.p!=null?`<dt>Screening</dt><dd><span class="pill ${e.flag?'bad':'ok'}">${e.flag?'Likely above':'Likely below'} ${fmtConc(m.threshold,comp)}</span> <span class="tiny">probability score ${(e.p*100).toFixed(0)}%</span></dd>`:''}<dt>Status</dt><dd>${c.level!=null && e.mu>=c.level?'<span class="pill bad">Possible pharmaceutical contamination detected</span>':'<span class="pill ok">Below screening level</span>'}</dd><dt>Recommendation</dt><dd>${c.level!=null && e.mu>=c.level?'Confirm with laboratory analysis':'Continue monitoring; confirm periodically with HPLC'}</dd>`:'';
++  $('#mlAssess').innerHTML= m.external ? `<b>How to read this.</b> This model was trained in Google Colab on ${m.n} real US river samples and tested on ${m.nHold} samples from ${m.nHoldSites} sites it never saw. Its strength is <b>screening</b>: flagged readings were truly high ${((m.screenHold?.hit_rate||0)*100).toFixed(0)}% of the time, against ${((m.screenHold?.base_rate||0)*100).toFixed(0)}% for random sampling. The level estimate is rough (R² ${m.level.r2_log_cv.toFixed(2)}). It has not been calibrated on Penang water. ${e&&e.reasons.length? 'Current reading: '+esc(e.reasons.join('; '))+'.':''}` : `<b>How to read this.</b> ${m.r2>=0.7?'Sensor combinations explain most of the variation in HPLC results for this dataset.':m.r2>=0.5?'Sensor combinations explain part of the variation; use estimates for screening only.':'Sensor signals explain little of the HPLC variation for this compound. Treat estimates as unreliable.'} ${m.r2UV!=null? (m.r2-m.r2UV>0.05?`The multivariable model adds ${((m.r2-m.r2UV)*100).toFixed(0)} points of R² over UV alone.`:'UV alone performs about as well as the full model.'):''} ${e&&e.reasons.length? 'Current reading: '+esc(e.reasons.join('; '))+'.':''}`;
++  if(m.external){ $('#mlCard').innerHTML=`Compound: ${esc(c.name)} · unit ${esc(u)}<br>Source: ${esc(m.pkgSource)}<br>Built in Google Colab, ${fmtT(m.trainedAt)}<br>Inputs: ${m.feats.map(f=>esc(PARAMS[f]?.label||f)).join(', ')}<br>Screening model: random forest classifier, 60 trees, depth 8; flags a reading when its score is in the riskiest 10% of training readings (score ≥ ${(m.pThr*100).toFixed(1)}%). "High" = above ${fmtConc(m.threshold,comp)} (${m.thresholdNg} ng/L, the median of US detections).<br>Level model: random forest regressor on log10 concentration, detected samples only (${m.nDetected}).<br>Validation: 5-fold cross-validation grouped by site; 20% of sites held back entirely (${m.nHold} samples, ${m.nHoldSites} sites).`; }
++  else $('#mlCard').innerHTML=`Compound: ${esc(c.name)} (${esc(c.cas)}) · target unit ${esc(u)}<br>Algorithm: ${m.type==='rf'?'Random forest, 120 trees, max depth 7, min leaf 3, bootstrap':'Ridge regression on standardised inputs, λ = 1'}<br>Inputs: ${m.feats.map(f=>esc(PARAMS[f]?.label||EXTRA_FEATS[f]||f)).join(', ')}<br>Validation: 5-fold CV (shuffled, seed 1234). Uncertainty = 1.96·√(tree spread² + CV RMSE²).<br>Applicability domain: each input within training range ±10%.<br>Pairing: HPLC samples matched to readings within ±${CFG.matchWinMin} min and ${CFG.matchDistM} m (weighted average).<br>Values below LOD entered as LOD/2 (grey points).<br>Trained ${fmtT(m.trainedAt)}${S.serverModels[comp]?`<br>Server model: v${S.serverModels[comp].version}, CV R² ${S.serverModels[comp].r2_cv.toFixed(2)}`:''}`;
+ }
+-function renderScatter(){ const comp=$('#mlComp').value; const m=S.models[comp]; if(!m) return; const k=$('#mlScX').value; const P=pairs(comp); const x=P.map(h=>h.match.sensors[k]), y=P.map(h=>h.conc); const lf=linfit(x,y); const xs=[Math.min(...x),Math.max(...x)];
++function renderScatter(){ const comp=$('#mlComp').value; const m=S.models[comp]; if(!m) return; const k=$('#mlScX').value; const P=pairs(comp).filter(h=>isFinite(h.match.sensors[k])); if(!P.length){ if(CH.mlScatter){CH.mlScatter.destroy(); delete CH.mlScatter;} return; } const x=P.map(h=>h.match.sensors[k]), y=P.map(h=>h.conc); const lf=linfit(x,y); const xs=[Math.min(...x),Math.max(...x)];
+   chart('mlScatter',{type:'scatter',data:{datasets:[{label:'Lab samples',data:x.map((v,i)=>({x:v,y:y[i]})),pointBackgroundColor:css('--lab'),pointBorderColor:css('--panel'),pointBorderWidth:1,pointRadius:4.5},{label:`Linear fit, R² ${lf.r2.toFixed(2)}`,type:'line',data:xs.map(v=>({x:v,y:lf.a+lf.b*v})),borderColor:css('--s1'),pointRadius:0,borderWidth:1.5}]},
+     options:baseOpts({scales:{x:{type:'linear',title:{display:true,text:paramLabel(k),color:css('--fg-2')},ticks:{color:css('--fg-2')},grid:{color:css('--line-2')}},y:{title:{display:true,text:`${S.compounds[comp].name} (${S.compounds[comp].unit})`,color:css('--fg-2')},ticks:{color:css('--fg-2')},grid:{color:css('--line-2')}}}})}); }
+ $('#mlScX').addEventListener('change',renderScatter);
++$('#mlPkgDemo').onclick=async()=>{ try{ const ids=await loadBundledModel(); $('#mlComp').value=ids[0]; mlFeats=null; renderML(true); }catch(e){ toast('Could not load the model: '+e.message); } };
++$('#mlPkgFile').addEventListener('change',e=>{ const f=e.target.files[0]; if(!f) return; const rd=new FileReader(); rd.onload=()=>{ try{ const ids=useModelPackage(JSON.parse(rd.result)); $('#mlComp').value=ids[0]; mlFeats=null; renderML(true); }catch(err){ toast(err.message); } }; rd.readAsText(f); e.target.value=''; });
+ $('#mlComp').addEventListener('change',()=>{ mlFeats=null; renderML(true); });
+ $('#mlTrain').onclick=async()=>{ const comp=$('#mlComp').value; mlFeats=$$('#mlFeat input:checked').map(i=>i.value); if(!mlFeats.length) return toast('Select at least one input.');
+   $('#mlTrain').disabled=true; $('#mlTrain').textContent='Training…'; await new Promise(r=>setTimeout(r,30));

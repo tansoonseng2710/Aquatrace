@@ -1,0 +1,16 @@
+# Vercel hosts only the dashboard (frontend/). The API, firmware and tools run elsewhere.
+backend/
+firmware/
+tools/
+deploy/
+samples/
+frontend/src/
+frontend/build.sh
+Dockerfile
+docker-compose.yml
+.env*
+ml_api/
+colab/
+.venv_ml_api/
+*.bat
+_backup_*/

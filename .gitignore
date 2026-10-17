@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# Local data (recreate with: python -m app.seed --demo)
+backend/aquatrace.db
+backend/models/*.joblib
+# Secrets
+.env
+.venv_ml_api/
+_backup_*/
+_original_before_colab/
+_previous_*/
+*.log

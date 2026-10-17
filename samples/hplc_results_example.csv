@@ -1,0 +1,5 @@
+sample_id,timestamp,lat,lon,compound,concentration,unit,lod,method,notes
+S-101,2026-09-28T09:15:00+08:00,5.408132,100.322845,Paracetamol,0.12,mg/L,0.005,SPE + HPLC-UV 243 nm,SP2 grab sample
+S-101,2026-09-28T09:15:00+08:00,5.408132,100.322845,Diclofenac,<LOD,µg/L,0.054,SPE + HPLC-UV 254 nm,SP2 grab sample
+S-102,2026-09-28T10:40:00+08:00,5.403843,100.330476,PCM,190,µg/L,5,SPE + HPLC-UV 243 nm,SP5
+S-103,2026-09-28T11:05:00+08:00,5.410733,100.313743,Atenolol,48.2,µg/L,0.08,SPE + HPLC-UV 254 nm,SP1 hospital drain

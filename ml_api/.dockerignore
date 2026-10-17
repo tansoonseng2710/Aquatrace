@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+test_api.py
+crosscheck_lab_results.csv
+.vercelignore
+.python-version

@@ -1,0 +1,9 @@
+run_id,catalyst,dose_gL,light,compound,time_h,conc,ph,orp,uv,turbidity,toc
+R9,Fe2O3-TiO2,0.2,simulated solar,PCM,0,5.00,6.9,245,0.65,39,4.1
+R9,Fe2O3-TiO2,0.2,simulated solar,PCM,1,1.90,6.7,330,0.36,40,3.7
+R9,Fe2O3-TiO2,0.2,simulated solar,PCM,2,0.70,6.6,352,0.20,39,3.3
+R9,Fe2O3-TiO2,0.2,simulated solar,PCM,3,0.26,6.5,360,0.13,40,3.1
+C9,none,0,simulated solar,PCM,0,5.00,6.9,245,0.61,3,4.1
+C9,none,0,simulated solar,PCM,1,4.85,6.9,252,0.60,3,4.1
+C9,none,0,simulated solar,PCM,2,4.71,6.9,259,0.59,3,4.0
+C9,none,0,simulated solar,PCM,3,4.60,6.8,266,0.58,3,4.0
