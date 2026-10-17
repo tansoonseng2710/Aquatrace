@@ -86,15 +86,15 @@ function trainModel(comp, type, feats){
     oof:P.map((p,i)=>({y:p.y, yhat:oof[i], id:p.h.sample_id, below:p.h.below})), X, y, final, trainedAt:Date.now(), yMax:Math.max(...y)};
   return res;
 }
-function predictWithUncertainty(m, x){
-  if(m.external){   // Colab model: level in log space, plus a screening probability
+function predictWithUncertainty(m, x, when){
+  if(m.external){   // Colab model: level in log space, plus a screening probability (when = the reading, for the season input)
     const lg=m.final.logs(x), ml=mean(lg), sp=sd(lg), s=Math.sqrt(sp*sp+m.rmseLog*m.rmseLog);
     const mu=Math.pow(10,ml)*m.fac, lo=Math.pow(10,ml-1.96*s)*m.fac, hi=Math.pow(10,ml+1.96*s)*m.fac;
-    const p=m.final.screen(x), flag=p>=m.pThr;
+    const p=m.final.screen(x, when), alert=mlAlert(m, p), flag=alert==='red';
     const outside=m.feats.filter((f,j)=>{ const [a,b]=m.ranges[j]; const pad=0.1*(b-a||Math.abs(a)*0.1||1); return x[j]<a-pad || x[j]>b+pad; });
     const auc=m.screenHold?.auc ?? 0; let conf=auc>=0.85?'High':auc>=0.7?'Medium':'Low'; const reasons=[`screening AUC on held-out sites is ${auc.toFixed(2)}`];
     if(outside.length){ conf='Low'; reasons.push('outside calibration range: '+outside.map(f=>PARAMS[f]?.short||PARAMS[f]?.label||f).join(', ')); }
-    return {mu, lo, hi, conf, reasons, outside, p, flag};
+    return {mu, lo, hi, conf, reasons, outside, p, flag, alert};
   }
   const mu = Math.max(0, m.final.predict(x)); const sp = m.final.spread(x);
   const hw = 1.96*Math.sqrt(sp*sp + m.rmse*m.rmse);
@@ -111,6 +111,30 @@ function predictWithUncertainty(m, x){
 function trainAll(){ for(const c of Object.keys(S.compounds)){ const r=trainModel(c, c===CFG.target? (S.models[c]?.type||'rf') : 'rf', S.models[c]?.feats || CFG.feats); S.models[c] = r.error? null : r; } }
 
 /* ---------- models trained outside the browser (Google Colab model packages) ---------- */
+// Season input: the month of the reading on a circle (the package carries the exact table the notebook used).
+const SEASON_DEFAULT = {m_sin: [...Array(12)].map((_, i) => Math.round(Math.sin(2 * Math.PI * (i + 1) / 12) * 1e6) / 1e6),
+                        m_cos: [...Array(12)].map((_, i) => Math.round(Math.cos(2 * Math.PI * (i + 1) / 12) * 1e6) / 1e6)};
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Month 1-12 of a reading: its 'month', else its time (ISO text: the month as written; a number: UTC), else this month.
+function mlMonth(src){
+  const now = () => new Date().getUTCMonth() + 1;
+  if(src == null) return now();
+  if(typeof src === 'number') return isFinite(src) ? new Date(src).getUTCMonth() + 1 : now();
+  const m = Math.trunc(+src.month); if(m >= 1 && m <= 12) return m;
+  for(const t of [src.timestamp, src.ts]){
+    if(typeof t === 'string' && t.trim()){ const h = /^\s*\d{4}-(\d{2})/.exec(t); if(h && +h[1] >= 1 && +h[1] <= 12) return +h[1];
+      const d = Date.parse(t); if(isFinite(d)) return new Date(d).getUTCMonth() + 1; }
+    if(typeof t === 'number' && isFinite(t)) return new Date(t).getUTCMonth() + 1;
+  }
+  return now();
+}
+// Alert level: red = send to lab (red line), amber = watch (amber line), green = no test needed.
+function mlAlert(m, p){ return p >= m.pThr ? 'red' : p >= (m.pAmber ?? m.pThr) ? 'amber' : 'green'; }
+function mlAlertPill(a, title){
+  const t = title ? ` title="${esc(title)}"` : '';
+  return a === 'red' ? `<span class="pill bad"${t}>🔴 Send to lab</span>` : a === 'amber' ? `<span class="pill warn"${t}>🟠 Watch</span>` : `<span class="pill ok"${t}>No test needed</span>`;
+}
+function mlKindLabel(m){ return (m.kind === 'two-step' ? 'two-step' : 'one-step') + (m.season ? ' + season' : ''); }
 // Trees arrive as arrays: [feature, threshold, left, right] for a split, [value] for a leaf.
 // Split rule matches scikit-learn: x <= threshold goes left, with x rounded to 32-bit first (scikit-learn stores inputs as float32).
 function treeFromArrays(nodes){ const mk=i=>{ const n=nodes[i]; return n.length===1?{v:n[0]}:{f:n[0],t:n[1],l:mk(n[2]),r:mk(n[3])}; }; return mk(0); }
@@ -120,14 +144,20 @@ function loadModelPackage(pkg){
   const loaded=[];
   for(const [id,p] of Object.entries(pkg.models)){
     if(!S.compounds[id]) S.compounds[id]={id, name:p.name, unit:p.unit, level:p.threshold, cls:'', cas:'', external:true};
-    const ct=p.clf_trees.map(treeFromArrays), rt=p.reg_trees.map(treeFromArrays);
+    const kind=p.kind||'one-step', season=!!p.season, tab=pkg.season_table||SEASON_DEFAULT;
+    const two=kind==='two-step';
+    const ct=two?null:p.clf_trees.map(treeFromArrays), dtr=two?p.det_trees.map(treeFromArrays):null, qt=two?p.cond_trees.map(treeFromArrays):null, rt=p.reg_trees.map(treeFromArrays);
     const fac=p.ng_to_unit ?? (p.threshold/p.threshold_ngL);
     const f32=x=>x.map(v=>Math.fround(v));
     const logs=x=>{ const z=f32(x); return rt.map(t=>treePred(t,z)); };
-    const final={ logs, predict:x=>Math.pow(10,mean(logs(x)))*fac, spread:x=>sd(logs(x)), screen:x=>{ const z=f32(x); return mean(ct.map(t=>treePred(t,z))); } };
+    // screening: x = sensor readings in m.feats order; when = the reading (or its time), used only by season models
+    const screen=(x, when)=>{ let z=x; if(season){ const mo=mlMonth(when); z=[...x, tab.m_sin[mo-1], tab.m_cos[mo-1]]; } z=f32(z);
+      return two ? mean(dtr.map(t=>treePred(t,z)))*mean(qt.map(t=>treePred(t,z))) : mean(ct.map(t=>treePred(t,z))); };
+    const final={ logs, predict:x=>Math.pow(10,mean(logs(x)))*fac, spread:x=>sd(logs(x)), screen };
     S.models[id]={comp:id, type:'rf', external:true, pkgSource:pkg.source, pkgCreated:pkg.created, feats:p.feats, n:p.n, nDetected:p.n_detected,
       nSites:p.n_sites, nHold:p.n_holdout, nHoldSites:p.n_holdout_sites, r2:p.level.r2_log_cv, rmseLog:p.level.rmse_log_cv, rmse:p.level.rmse_log_cv,
-      mae:null, fitR2:null, r2UV:null, bias:0, fac, threshold:p.threshold, thresholdNg:p.threshold_ngL, pThr:p.p_threshold,
+      mae:null, fitR2:null, r2UV:null, bias:0, fac, threshold:p.threshold, thresholdNg:p.threshold_ngL, pThr:p.p_threshold, pAmber:p.p_amber ?? p.p_threshold,
+      kind, season, alertRule:p.alert_rule||'', screenHoldAmber:p.screen_holdout_amber||null,
       screenCV:p.screen_cv, screenHold:p.screen_holdout, screenTrain:p.screen_train, chosen:p.chosen, split:p.split, level:p.level, importance:p.importance, corr:p.corr, ranges:p.ranges,
       oof:p.oof, yMax:Math.max(...p.oof.map(o=>o.y)), final, trainedAt:Date.parse(pkg.created)||Date.now()};
     loaded.push(id);
@@ -138,9 +168,9 @@ function loadModelPackage(pkg){
 function crossCheckOne(h, m){
   const s=h.match&&h.match.ok? h.match.sensors : null; if(!s) return null;
   const x=featVec(s, m.feats); if(!x.every(v=>v!=null && isFinite(v))) return null;
-  const p=m.final.screen(x), flag=p>=m.pThr, labHigh=!h.below && h.conc>=m.threshold;
+  const p=m.final.screen(x, h), alert=mlAlert(m, p), flag=alert==='red', labHigh=!h.below && h.conc>=m.threshold;
   const est=m.final.predict(x);
-  return {p, flag, labHigh, est, verdict: flag===labHigh ? (labHigh?'both high':'both low') : (labHigh?'missed high':'false alarm')};
+  return {p, flag, alert, labHigh, est, verdict: flag===labHigh ? (labHigh?'both high':'both low') : (labHigh?'missed high':'false alarm')};
 }
 function crossCheckSummary(comp){
   const m=S.models[comp]; if(!m||!m.external) return null;

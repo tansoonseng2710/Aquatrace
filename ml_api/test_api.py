@@ -31,8 +31,8 @@ for path in ["/", "/health", "/models", "/models/ATL-US", "/evaluation", "/model
     print(f"GET {path:16s} {r.status_code}")
     ok &= r.status_code == 200
 
-r = c.post("/predict", json={"readings": {"ph": 7.6, "temp": 24, "conductivity": 950, "turbidity": 8.5, "do": 6.2}})
-print("POST /predict", r.status_code, [(x["compound"], x.get("p_high"), x.get("flag")) for x in r.json()["results"]])
+r = c.post("/predict", json={"readings": {"ph": 7.6, "temp": 24, "conductivity": 950, "turbidity": 8.5, "do": 6.2, "month": 10}})
+print("POST /predict", r.status_code, [(x["compound"], x.get("p_high"), x.get("alert")) for x in r.json()["results"]])
 ok &= r.status_code == 200 and all(x["ok"] for x in r.json()["results"])
 r = c.post("/predict", json={"readings": {"ph": 7.6}, "compounds": ["CBZ-US"]})
 print("POST /predict (missing sensors)", r.json()["results"][0]["message"])
@@ -43,7 +43,7 @@ if CROSS:
     print(f"\nRe-scoring {len(rows):,} testing-set lab results through POST /predict/batch")
     for cid, m in PKG.models.items():
         R = [x for x in rows if x["compound"] == cid]
-        items = [{f: (float(x[f]) if x[f] != "" else None) for f in m.feats} for x in R]
+        items = [{**{f: (float(x[f]) if x[f] != "" else None) for f in m.feats}, "timestamp": x["timestamp"]} for x in R]
         out = c.post("/predict/batch", json={"items": items, "compounds": [cid]}).json()["results"]
         p = [o[0]["p_high"] for o in out]
         flag = [o[0]["flag"] for o in out]

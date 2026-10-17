@@ -21,7 +21,7 @@ pH, temperature, conductivity, turbidity and dissolved oxygen.
 | GET | `/models` | The 5 models: sensors, "high" level, testing scores |
 | GET | `/evaluation` | Confusion matrix, precision / recall / F1 vs random, mAP, algorithm comparison |
 | GET | `/model-package` | The full model file (the website loads it from here) |
-| POST | `/predict` | One set of readings → P(high), lab flag, level estimate per medicine |
+| POST | `/predict` | One set of readings (+ optional `month` or `timestamp`) → P(high), alert (red = send to lab, amber = watch, green), level estimate per medicine |
 | POST | `/predict/batch` | Up to 5,000 readings at once |
 
 Example:

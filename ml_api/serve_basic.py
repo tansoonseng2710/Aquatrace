@@ -47,6 +47,16 @@ def readings_from(obj):
             raise BadRequest(422, f"{k} must be a number")
         if not math.isfinite(out[k]):
             raise BadRequest(422, f"{k} must be a finite number")
+    m = obj.get("month")
+    if m is not None:
+        try:
+            m = int(float(m))
+        except (TypeError, ValueError):
+            raise BadRequest(422, "month must be a whole number 1-12")
+        if not 1 <= m <= 12:
+            raise BadRequest(422, "month must be 1-12")
+    out["month"] = m
+    out["timestamp"] = obj.get("timestamp") if isinstance(obj.get("timestamp"), str) else None
     return out
 
 

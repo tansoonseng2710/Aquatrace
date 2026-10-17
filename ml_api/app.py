@@ -52,17 +52,19 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 class Readings(BaseModel):
     model_config = ConfigDict(extra="ignore", json_schema_extra={
-        "example": {"ph": 7.6, "temp": 24.0, "conductivity": 950, "turbidity": 8.5, "do": 6.2}})
+        "example": {"ph": 7.6, "temp": 24.0, "conductivity": 950, "turbidity": 8.5, "do": 6.2, "month": 10}})
     ph: Optional[float] = Field(None, description="pH")
     temp: Optional[float] = Field(None, description="Water temperature, °C")
     conductivity: Optional[float] = Field(None, description="Conductivity, µS/cm")
     turbidity: Optional[float] = Field(None, description="Turbidity, NTU")
     do: Optional[float] = Field(None, description="Dissolved oxygen, mg/L")
+    month: Optional[int] = Field(None, ge=1, le=12, description="Month of the reading, 1-12 (season input; default: this month)")
+    timestamp: Optional[str] = Field(None, description="Time of the reading, e.g. 2026-10-17T09:30:00+08:00 (used for the month if month is empty)")
 
 
 class PredictIn(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {
-        "readings": {"ph": 7.6, "temp": 24.0, "conductivity": 950, "turbidity": 8.5, "do": 6.2},
+        "readings": {"ph": 7.6, "temp": 24.0, "conductivity": 950, "turbidity": 8.5, "do": 6.2, "month": 10},
         "compounds": None}})
     readings: Readings
     compounds: Optional[list[str]] = Field(None, description="Model ids, e.g. ['CBZ-US']; empty = all 5")

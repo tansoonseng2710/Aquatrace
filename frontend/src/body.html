@@ -255,7 +255,7 @@
     <div class="panel"><div class="ph"><h2>Latest reading</h2><span class="tools tiny" id="liveWhen"></span></div><div class="kv" id="liveSensors"></div></div>
     <div class="panel"><div class="ph"><h2>What the model says now</h2><span class="tools small" id="liveNote"></span></div><div class="mcards" id="liveCards"></div></div>
     <div class="grid g2">
-      <div class="panel"><div class="ph"><h2>Chance of "high" over time</h2></div><div class="chart"><canvas id="liveChart"></canvas></div><div class="tiny">Dashed red line = flag line: above it, the model says take a sample for the lab.</div></div>
+      <div class="panel"><div class="ph"><h2>Chance of "high" over time</h2></div><div class="chart"><canvas id="liveChart"></canvas></div><div class="tiny">Red dashed line = red alert: above it, take a sample for the lab. Orange dotted line = amber: watch this spot and take a second reading.</div></div>
       <div class="panel"><div class="ph"><h2>Where to take lab samples</h2><span class="tools tiny" id="liveAlertsNote"></span></div><div id="liveAlerts" class="alerts"></div></div>
     </div>
   </section>
@@ -308,7 +308,7 @@
       <div class="panel"><div class="ph"><h2>Predicted chance vs real level</h2><span class="tools tiny">the screening view</span></div><div class="chart tall"><canvas id="resPvc"></canvas></div><div class="tiny" id="resPvcNote"></div></div>
     </div>
     <div class="grid g2">
-      <div class="panel"><div class="ph"><h2>Precision–recall curves</h2><span class="tools tiny">dot = our flag line</span></div><div class="chart tall"><canvas id="resPr"></canvas></div><div class="tiny">Higher and further right is better. AP = area under the curve; mAP = average over the medicines.</div></div>
+      <div class="panel"><div class="ph"><h2>Precision–recall curves</h2><span class="tools tiny">dot = our red line (send to lab)</span></div><div class="chart tall"><canvas id="resPr"></canvas></div><div class="tiny">Higher and further right is better. AP = area under the curve; mAP = average over the medicines.</div></div>
       <div class="panel"><div class="ph"><h2>ROC curves</h2><span class="tools tiny">dashed = coin flip</span></div><div class="chart tall"><canvas id="resRoc"></canvas></div><div class="tiny">The further above the dashed line, the better the model separates high from low water.</div></div>
     </div>
     <div class="panel"><div class="ph"><h2>Which algorithm? 7 compared</h2></div><div class="tw"><table><thead><tr><th>Algorithm</th><th>Cross-validation mAP <span class="nu">(we choose by this)</span></th><th class="n">CV mAP</th><th class="n">Test accuracy</th><th class="n">Precision</th><th class="n">Recall</th><th class="n">F1</th><th class="n">Test mAP</th></tr></thead><tbody id="resAlgoTable"></tbody></table></div><div class="small muted" id="resAlgoNote"></div></div>

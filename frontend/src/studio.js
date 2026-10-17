@@ -46,7 +46,7 @@ function stuActivate(id){
 function stuBars(){
   const e = stuActiveEntry(), ids = mlModelIds(), on = stuIds(), eng = stuEngine();
   const html = !e ? '<span class="muted">No model loaded yet.</span>' :
-    `<span>🧠 Model in use: <b>${esc(e.name)}</b> · built ${esc(fmtT(Date.parse(e.pkg.created)))}</span><span>Random forest (chosen from 7)</span>`
+    `<span>🧠 Model in use: <b>${esc(e.name)}</b> · built ${esc(fmtT(Date.parse(e.pkg.created)))}</span><span>Random forest · 🔴 red = send to lab · 🟠 amber = watch</span>`
     + `<span>${on.length} of ${ids.length} medicines on</span>`
     + `<span>Runs: <span class="pill ${eng === 'api' ? 'ok' : 'warn'}">${eng === 'api' ? 'online ML API' : 'in this browser'}</span></span><a href="#models">Change model</a>`;
   for(const s of ['#liveModelBar', '#upModelBar', '#resModelBar']){ const el = $(s); if(el) el.innerHTML = html; }
@@ -59,8 +59,8 @@ function stuLocal(rd, ids){
     const m = S.models[id]; const miss = m.feats.filter(f => rd[f] == null || !isFinite(rd[f]));
     const base = {compound: id, sensors_used: m.feats};
     if(miss.length) return {...base, ok: false, message: 'Needs ' + miss.map(f => PARAMS[f]?.short || PARAMS[f]?.label || f).join(', ')};
-    const e = predictWithUncertainty(m, m.feats.map(f => rd[f]));
-    return {...base, ok: true, p_high: e.p, flag: e.flag, flag_line: m.pThr, confidence: e.conf, reasons: e.reasons,
+    const e = predictWithUncertainty(m, m.feats.map(f => rd[f]), rd);
+    return {...base, ok: true, p_high: e.p, flag: e.flag, alert: e.alert, flag_line: m.pThr, amber_line: m.pAmber, confidence: e.conf, reasons: e.reasons,
       estimate: {value: e.mu, low: e.lo, high: e.hi, unit: S.compounds[id]?.unit || 'µg/L'}};
   });
 }
@@ -116,18 +116,18 @@ async function stuEvaluate(){
   if(STU.evalData && STU.evalKey === key) return STU.evalData;
   const rows = await stuCross(); const per = {};
   for(const id of ids){
-    const m = S.models[id]; const y = [], p = [], f = [], real = [], below = [], pred = [];
+    const m = S.models[id]; const y = [], p = [], f = [], am = [], real = [], below = [], pred = [];
     for(const r of rows){
       if(r.compound !== id) continue;
       const x = m.feats.map(k => r[k] === '' || r[k] == null ? NaN : +r[k]); if(!x.every(isFinite)) continue;
       const isBelow = r.concentration === '<LOD'; const conc = isBelow ? (+r.lod || 0) / 2 : +r.concentration;
-      const pv = m.final.screen(x);
-      y.push(!isBelow && conc >= m.threshold); p.push(pv); f.push(pv >= m.pThr); real.push(conc); below.push(isBelow); pred.push(m.final.predict(x));
+      const pv = m.final.screen(x, r), al = mlAlert(m, pv);
+      y.push(!isBelow && conc >= m.threshold); p.push(pv); f.push(al === 'red'); am.push(al === 'amber'); real.push(conc); below.push(isBelow); pred.push(m.final.predict(x));
     }
     const cm = stuCm(y, f), cur = stuCurves(y, p);
     const det = below.map((b, i) => b ? -1 : i).filter(i => i >= 0);
     const within2 = det.filter(i => Math.abs(Math.log10(pred[i] / real[i])) <= Math.log10(2)).length / Math.max(1, det.length);
-    per[id] = {y, p, f, real, below, pred, cm, ...stuScores(cm), ap: cur.ap, auc: cur.auc, pr: cur.pr, roc: cur.roc, within2, nDet: det.length};
+    per[id] = {y, p, f, am, nAmber: am.filter(Boolean).length, real, below, pred, cm, ...stuScores(cm), ap: cur.ap, auc: cur.auc, pr: cur.pr, roc: cur.roc, within2, nDet: det.length};
   }
   const sum = k => ids.reduce((s, id) => s + per[id].cm[k], 0);
   const pooled = {tp: sum('tp'), fp: sum('fp'), fn: sum('fn'), tn: sum('tn')};
@@ -153,7 +153,7 @@ function stuCmHtml(c){
     <span class="r">Model flags<br>"send to lab"</span><div class="c tp"><small>True positive</small><b>${c.tp.toLocaleString()}</b><small>correct flag</small></div><div class="c fp"><small>False positive</small><b>${c.fp.toLocaleString()}</b><small>false alarm</small></div>
     <span class="r">Model does<br>not flag</span><div class="c fn"><small>False negative</small><b>${c.fn.toLocaleString()}</b><small>missed</small></div><div class="c tn"><small>True negative</small><b>${c.tn.toLocaleString()}</b><small>correctly skipped</small></div></div>`;
 }
-function stuMeter(p, thr){ return `<div class="meter" title="chance ${stuPct(p, 0)}, flag line ${stuPct(thr, 0)}"><i style="width:${Math.max(1, p * 100)}%;background:${p >= thr ? 'var(--bad)' : 'var(--accent)'}"></i><u style="left:${thr * 100}%"></u></div>`; }
+function stuMeter(p, thr, amb){ amb = amb ?? thr; return `<div class="meter" title="chance ${stuPct(p, 0)} · red line ${stuPct(thr, 0)} · amber line ${stuPct(amb, 0)}"><i style="width:${Math.max(1, p * 100)}%;background:${p >= thr ? 'var(--bad)' : p >= amb ? 'var(--warn)' : 'var(--accent)'}"></i>${amb < thr ? `<u class="amb" style="left:${amb * 100}%"></u>` : ''}<u style="left:${thr * 100}%"></u></div>`; }
 function stuDownload(name, text, type = 'text/csv'){
   try{ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type})); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
   catch(e){ copyText(text); toast('Download blocked: copied to the clipboard instead'); }
@@ -176,12 +176,13 @@ function stuDrawPvr(canvasId, groups){   // groups: [{label, color, real[], pred
 function stuDrawPvc(canvasId, pts, opt){  // pts: [{x, y, kind:'flag'|'ok'|'below', label}], opt: {vx, hy, xTitle, yTitle, yMax}
   const xs = pts.map(p => p.x).filter(v => v > 0); if(!xs.length){ chart(canvasId, {type: 'scatter', data: {datasets: []}, options: baseOpts()}); return; }
   const lo = Math.min(...xs) * 0.7, hi = Math.max(...xs) * 1.4, ymax = opt.yMax || 1;
-  const kinds = [['flag', 'flagged: send to lab', css('--bad')], ['ok', 'detected, not flagged', css('--accent')], ['below', 'not detected by the lab', css('--fg-3')]];
+  const kinds = [['flag', 'red: send to lab', css('--bad')], ['watch', 'amber: watch', css('--warn')], ['ok', 'detected, no alert', css('--accent')], ['below', 'not detected by the lab', css('--fg-3')]];
   const ds = kinds.map(([k, label, col]) => ({label, data: pts.filter(p => p.kind === k && p.x > 0), backgroundColor: col + (k === 'below' ? '66' : 'BB'), borderColor: col, pointRadius: k === 'below' ? 2 : 2.8, pointStyle: k === 'below' ? 'triangle' : 'circle'}));
   ds.push({type: 'line', label: '"high" level', data: [{x: opt.vx, y: 0}, {x: opt.vx, y: ymax}], borderColor: css('--ok'), borderWidth: 1.6, pointRadius: 0},
-          {type: 'line', label: 'flag line', data: [{x: lo, y: opt.hy}, {x: hi, y: opt.hy}], borderColor: css('--fg'), borderDash: [5, 4], borderWidth: 1.2, pointRadius: 0});
+          {type: 'line', label: 'red line', data: [{x: lo, y: opt.hy}, {x: hi, y: opt.hy}], borderColor: css('--bad'), borderDash: [5, 4], borderWidth: 1.4, pointRadius: 0});
+  if(opt.ha != null && opt.ha < opt.hy) ds.push({type: 'line', label: 'amber line', data: [{x: lo, y: opt.ha}, {x: hi, y: opt.ha}], borderColor: css('--warn'), borderDash: [3, 4], borderWidth: 1.2, pointRadius: 0});
   chart(canvasId, {type: 'scatter', data: {datasets: ds}, options: baseOpts({interaction: {mode: 'nearest', intersect: true},
-    plugins: {tooltip: {callbacks: {label: c => c.dataset.type === 'line' ? c.dataset.label : opt.yScale ? `${c.raw.label || ''} ${(+c.raw.x).toFixed(2)}× the high level, ${c.raw.y.toFixed(2)}× the flag line` : `real ${(+c.raw.x).toPrecision(3)} µg/L, chance ${(c.raw.y * 100).toFixed(0)}%`}}},
+    plugins: {tooltip: {callbacks: {label: c => c.dataset.type === 'line' ? c.dataset.label : opt.yScale ? `${c.raw.label || ''} ${(+c.raw.x).toFixed(2)}× the high level, ${c.raw.y.toFixed(2)}× the red line` : `real ${(+c.raw.x).toPrecision(3)} µg/L, chance ${(c.raw.y * 100).toFixed(0)}%`}}},
     scales: {x: {...logAxis(opt.xTitle), min: lo, max: hi}, y: linAxis(opt.yTitle, 0, ymax)}})});
 }
 
@@ -205,14 +206,15 @@ function renderLive(full){
   const cards = ids.map(id => {
     const m = S.models[id], e = r.est?.[id];
     if(!e) return `<div class="mcard"><b>${esc(stuShort(id))}</b><span class="small muted">Needs ${m.feats.map(f => esc(PARAMS[f]?.short || PARAMS[f]?.label || f)).join(', ')}: this sensor is not reporting it.</span></div>`;
-    return `<div class="mcard ${e.flag ? 'flag' : ''}"><div class="flowrow"><b style="font-size:16px">${esc(stuShort(id))}</b><span class="sp"></span><span class="pill ${e.flag ? 'bad' : 'ok'}">${e.flag ? 'Send to lab' : 'No test needed'}</span></div>
-      <div class="flowrow"><span class="big">${stuPct(e.p)}</span><span class="small muted">chance of "high" · flag at ${stuPct(m.pThr)}</span></div>${stuMeter(e.p, m.pThr)}
+    return `<div class="mcard ${e.alert === 'red' ? 'flag' : e.alert === 'amber' ? 'watch' : ''}"><div class="flowrow"><b style="font-size:16px">${esc(stuShort(id))}</b><span class="sp"></span>${mlAlertPill(e.alert)}</div>
+      <div class="flowrow"><span class="big">${stuPct(e.p)}</span><span class="small muted">chance of "high" · red ≥ ${stuPct(m.pThr)} · amber ≥ ${stuPct(m.pAmber)}</span></div>${stuMeter(e.p, m.pThr, m.pAmber)}
       <div class="small">Level: <b>${fmtConc(e.mu, id)}</b> <span class="muted">(${fmtConc(e.lo, id)}–${fmtConc(e.hi, id)})</span></div>
       <div class="small">Confidence: <span class="pill ${e.conf === 'High' ? 'ok' : e.conf === 'Medium' ? 'warn' : 'bad'}" title="${esc(e.reasons.join('; '))}">${e.conf}</span> <span class="tiny">${esc(e.outside?.length ? 'outside training range: ' + e.outside.map(f => PARAMS[f]?.short || f).join(', ') : 'sensors: ' + m.feats.map(f => PARAMS[f]?.short || PARAMS[f]?.label || f).join(', '))}</span></div></div>`;
   });
   $('#liveCards').innerHTML = cards.join('');
-  const nFlag = ids.filter(id => r.est?.[id]?.flag).length;
-  $('#liveNote').innerHTML = nFlag ? `<b style="color:var(--bad)">${nFlag} medicine${nFlag > 1 ? 's' : ''} flagged: take a water sample here for the lab</b>` : 'No medicine flagged at this reading';
+  const nFlag = ids.filter(id => r.est?.[id]?.alert === 'red').length, nAmb = ids.filter(id => r.est?.[id]?.alert === 'amber').length;
+  $('#liveNote').innerHTML = (nFlag ? `<b style="color:var(--bad)">🔴 ${nFlag} medicine${nFlag > 1 ? 's' : ''}: take a water sample here for the lab</b>` : 'No red alert at this reading')
+    + (nAmb ? ` · <b style="color:var(--warn)">🟠 ${nAmb} on watch: take a second reading here</b>` : '');
   // chance over time for one medicine
   const id = STU.liveMed, m = S.models[id];
   if(m){
@@ -220,7 +222,8 @@ function renderLive(full){
     const t0 = pts[0]?.ts, t1 = pts[pts.length - 1]?.ts;
     chart('liveChart', {type: 'line', data: {datasets: [
       {label: `Chance of "high": ${stuShort(id)}`, data: pts.map(x => ({x: x.ts, y: x.est[id].p * 100})), borderColor: css('--accent'), backgroundColor: css('--accent-soft'), fill: true, pointRadius: 0, borderWidth: 2, tension: .2},
-      {label: 'Flag line', data: [{x: t0, y: m.pThr * 100}, {x: t1, y: m.pThr * 100}], borderColor: css('--bad'), borderDash: [6, 4], borderWidth: 1.4, pointRadius: 0}]},
+      {label: 'Red line (send to lab)', data: [{x: t0, y: m.pThr * 100}, {x: t1, y: m.pThr * 100}], borderColor: css('--bad'), borderDash: [6, 4], borderWidth: 1.4, pointRadius: 0},
+      {label: 'Amber line (watch)', data: [{x: t0, y: m.pAmber * 100}, {x: t1, y: m.pAmber * 100}], borderColor: css('--warn'), borderDash: [3, 4], borderWidth: 1.2, pointRadius: 0}]},
       options: baseOpts({plugins: {tooltip: {callbacks: {label: c => `${c.dataset.label}: ${c.raw.y.toFixed(0)}%`}}},
         scales: {x: {type: 'linear', min: t0, max: t1, ticks: {...timeTicks, color: css('--fg-3'), maxTicksLimit: 6}, grid: {display: false}}, y: {min: 0, max: 100, ticks: {color: css('--fg-3'), callback: v => v + '%'}, grid: {color: css('--line-2')}}}})});
   }
@@ -228,9 +231,9 @@ function renderLive(full){
   const since = (S.simNow || Date.now()) - 24 * 3600e3;
   const hits = S.readings.filter(x => x.ts >= since && ids.some(i => x.est?.[i]?.flag)).slice(-400);
   const groups = []; for(const x of hits){ const g = groups[groups.length - 1]; if(g && x.ts - g.end < 20 * 60e3){ g.end = x.ts; g.n++; ids.forEach(i => { if(x.est?.[i]?.flag) g.meds.add(i); }); } else groups.push({start: x.ts, end: x.ts, n: 1, lat: x.lat, lon: x.lon, meds: new Set(ids.filter(i => x.est?.[i]?.flag))}); }
-  $('#liveAlertsNote').textContent = `${groups.length} stretch${groups.length === 1 ? '' : 'es'} flagged in the last 24 h`;
-  $('#liveAlerts').innerHTML = groups.length ? groups.slice(-8).reverse().map(g => `<div class="alertrow"><span class="pill bad">Send to lab</span><div><b>${[...g.meds].map(stuShort).map(esc).join(', ')}</b><div class="tiny">${fmtT(g.start)}${g.n > 1 ? ` – ${fmtTime(g.end)} · ${g.n} readings` : ''} · ${g.lat?.toFixed(4)}° N, ${g.lon?.toFixed(4)}° E</div></div></div>`).join('')
-    : '<div class="empty">No reading flagged in the last 24 hours.</div>';
+  $('#liveAlertsNote').textContent = `${groups.length} stretch${groups.length === 1 ? '' : 'es'} with a red alert in the last 24 h`;
+  $('#liveAlerts').innerHTML = groups.length ? groups.slice(-8).reverse().map(g => `<div class="alertrow">${mlAlertPill('red')}<div><b>${[...g.meds].map(stuShort).map(esc).join(', ')}</b><div class="tiny">${fmtT(g.start)}${g.n > 1 ? ` – ${fmtTime(g.end)} · ${g.n} readings` : ''} · ${g.lat?.toFixed(4)}° N, ${g.lon?.toFixed(4)}° E</div></div></div>`).join('')
+    : '<div class="empty">No red alert in the last 24 hours.</div>';
 }
 $('#liveBoat')?.addEventListener('change', e => { if(typeof followBoat === 'function' && S.fleet.has(e.target.value)) followBoat(e.target.value); renderLive(true); });
 $('#liveMed')?.addEventListener('change', e => { STU.liveMed = e.target.value; renderLive(false); });
@@ -261,6 +264,7 @@ function upParse(text, name){
   const num = v => { if(v == null || v === '') return null; const x = +String(v).replace(',', '.'); return isFinite(x) ? x : null; };
   const rows = P.data.map((r, i) => {
     const rd = {}; for(const k of SENSOR_KEYS) rd[k] = map[k] ? num(r[map[k]]) : null;
+    if(map.timestamp) rd.timestamp = String(r[map.timestamp] ?? '');
     const o = {i, raw: r, rd, id: map.sample_id ? r[map.sample_id] : `row ${i + 1}`, ts: map.timestamp ? r[map.timestamp] : '', lat: map.lat ? num(r[map.lat]) : null, lon: map.lon ? num(r[map.lon]) : null};
     if(evalMode){
       o.cid = upMatchCompound(r[map.compound]); const cv = String(r[map.concentration] ?? '').trim();
@@ -296,7 +300,7 @@ function renderUpload(full){
   if(d.evalMode){
     const R = d.rows.filter(r => r.res && r.res.ok); const used = [...new Set(R.map(r => r.cid))];
     const unknown = d.rows.filter(r => !r.cid).length;
-    const kv = [['Rows', d.rows.length.toLocaleString()], ['Checked against the lab', R.length.toLocaleString()], ['Flagged: send to lab', R.filter(r => r.res.flag).length.toLocaleString()],
+    const kv = [['Rows', d.rows.length.toLocaleString()], ['Checked against the lab', R.length.toLocaleString()], ['🔴 Send to lab', R.filter(r => r.res.flag).length.toLocaleString()], ['🟠 Watch', R.filter(r => r.res.alert === 'amber').length.toLocaleString()],
       ['Lab says high', R.filter(r => !r.below && r.conc >= S.models[r.cid].threshold).length.toLocaleString()], ['Medicines', used.length]];
     $('#upKv').innerHTML = kv.map(([a, b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('') + (unknown ? `<div><span>Unknown compound</span><b>${unknown}</b></div>` : '');
     $('#upEvalPanel').hidden = !R.length;
@@ -311,23 +315,24 @@ function renderUpload(full){
       return `<tr><td><b>${esc(stuShort(id))}</b></td><td class="n">${Q.length}</td><td class="n">${c.tp}</td><td class="n">${c.fp}</td><td class="n">${c.fn}</td><td class="n">${c.tn}</td><td class="n"><b>${stuPct(s.precision)}</b> <span class="tiny">vs ${stuPct(s.base)}</span></td><td class="n">${stuPct(s.recall)}</td><td class="n">${yy.some(Boolean) && yy.some(v => !v) ? a.auc.toFixed(2) : '–'}</td></tr>`; }).join('');
     const groups = (STU.upMed === 'ALL' ? used : [STU.upMed]).map((id, i) => { const Q = sel.filter(r => r.cid === id && !r.below && r.conc > 0); return {label: stuShort(id), color: MED_COL[mlModelIds().indexOf(id) % MED_COL.length], real: Q.map(r => r.conc), pred: Q.map(r => r.res.estimate.value)}; });
     stuDrawPvr('upPvr', groups);
-    if(STU.upMed === 'ALL') stuDrawPvc('upPvc', sel.map(r => ({x: (r.conc || 1e-9) / S.models[r.cid].threshold, y: r.res.p_high / S.models[r.cid].pThr, kind: r.below ? 'below' : r.res.flag ? 'flag' : 'ok', label: stuShort(r.cid) + ':'})),
-      {vx: 1, hy: 1, yMax: Math.max(2, ...sel.map(r => r.res.p_high / S.models[r.cid].pThr)) * 1.02, yScale: 1, xTitle: 'Real level ÷ "high" level (1 = high)', yTitle: 'Chance ÷ flag line (1 = flag line)'});
-    else { const m = S.models[STU.upMed]; stuDrawPvc('upPvc', sel.map(r => ({x: r.conc, y: r.res.p_high, kind: r.below ? 'below' : r.res.flag ? 'flag' : 'ok'})), {vx: m.threshold, hy: m.pThr, xTitle: 'Real level, lab-measured (µg/L)', yTitle: 'Predicted chance of "high"'}); }
+    if(STU.upMed === 'ALL') stuDrawPvc('upPvc', sel.map(r => ({x: (r.conc || 1e-9) / S.models[r.cid].threshold, y: r.res.p_high / S.models[r.cid].pThr, kind: r.below ? 'below' : r.res.flag ? 'flag' : r.res.alert === 'amber' ? 'watch' : 'ok', label: stuShort(r.cid) + ':'})),
+      {vx: 1, hy: 1, yMax: Math.max(2, ...sel.map(r => r.res.p_high / S.models[r.cid].pThr)) * 1.02, yScale: 1, xTitle: 'Real level ÷ "high" level (1 = high)', yTitle: 'Chance ÷ red line (1 = red line)'});
+    else { const m = S.models[STU.upMed]; stuDrawPvc('upPvc', sel.map(r => ({x: r.conc, y: r.res.p_high, kind: r.below ? 'below' : r.res.flag ? 'flag' : r.res.alert === 'amber' ? 'watch' : 'ok'})), {vx: m.threshold, hy: m.pThr, ha: m.pAmber, xTitle: 'Real level, lab-measured (µg/L)', yTitle: 'Predicted chance of "high"'}); }
     $('#upHead').innerHTML = '<tr><th>Sample</th><th>Medicine</th><th class="n">Lab result</th><th class="n">Chance of "high"</th><th>Model</th><th>Lab says</th><th>Verdict</th><th class="n">Level estimate</th></tr>';
     $('#upBody').innerHTML = d.rows.slice(0, 300).map(r => { const s = r.res; if(!r.cid) return `<tr><td>${esc(r.id)}</td><td colspan="7" class="muted">compound not recognised</td></tr>`;
       if(!s || !s.ok) return `<tr><td>${esc(r.id)}</td><td>${esc(stuShort(r.cid))}</td><td colspan="6" class="muted">${esc(s?.message || 'not screened')}</td></tr>`;
       const hi = !r.below && r.conc >= S.models[r.cid].threshold, v = s.flag === hi ? (hi ? 'both high' : 'both low') : (hi ? 'missed high' : 'false alarm');
-      return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(stuShort(r.cid))}</td><td class="n">${r.below ? '&lt;LOD' : fmtConc(r.conc, r.cid)}</td><td class="n">${stuPct(s.p_high)}</td><td><span class="pill ${s.flag ? 'bad' : 'ok'}">${s.flag ? 'Send to lab' : 'No test'}</span></td><td>${hi ? '<b>high</b>' : 'low'}</td><td><span class="pill ${s.flag === hi ? 'ok' : hi ? 'bad' : 'warn'}">${v}</span></td><td class="n">${fmtConc(s.estimate.value, r.cid)}</td></tr>`; }).join('');
+      return `<tr><td class="mono">${esc(r.id)}</td><td>${esc(stuShort(r.cid))}</td><td class="n">${r.below ? '&lt;LOD' : fmtConc(r.conc, r.cid)}</td><td class="n">${stuPct(s.p_high)}</td><td>${mlAlertPill(s.alert || (s.flag ? 'red' : 'green'))}</td><td>${hi ? '<b>high</b>' : 'low'}</td><td><span class="pill ${s.flag === hi ? 'ok' : hi ? 'bad' : 'warn'}">${v}</span></td><td class="n">${fmtConc(s.estimate.value, r.cid)}</td></tr>`; }).join('');
   } else {
     const flagged = id => d.rows.filter(r => r.resAll?.find(x => x.compound === id)?.flag).length;
+    const watched = id => d.rows.filter(r => r.resAll?.find(x => x.compound === id)?.alert === 'amber').length;
     const okRows = d.rows.filter(r => r.resAll?.some(x => x.ok)).length;
-    $('#upKv').innerHTML = [['Rows', d.rows.length.toLocaleString()], ['Rows screened', okRows.toLocaleString()], ['Rows with any flag', d.rows.filter(r => r.resAll?.some(x => x.flag)).length.toLocaleString()]]
-      .map(([a, b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('') + ids.map(id => `<div><span>${esc(stuShort(id))}: send to lab</span><b>${flagged(id)}</b></div>`).join('');
+    $('#upKv').innerHTML = [['Rows', d.rows.length.toLocaleString()], ['Rows screened', okRows.toLocaleString()], ['Rows with a red alert', d.rows.filter(r => r.resAll?.some(x => x.flag)).length.toLocaleString()]]
+      .map(([a, b]) => `<div><span>${a}</span><b>${b}</b></div>`).join('') + ids.map(id => `<div><span>${esc(stuShort(id))}: 🔴 lab · 🟠 watch</span><b>${flagged(id)} · ${watched(id)}</b></div>`).join('');
     $('#upEvalPanel').hidden = true;
     $('#upHead').innerHTML = `<tr><th>Sample</th>${d.sensors.map(k => `<th class="n">${esc(PARAMS[k]?.short || PARAMS[k]?.label)}</th>`).join('')}${ids.map(id => `<th>${esc(stuShort(id))}</th>`).join('')}</tr>`;
     $('#upBody').innerHTML = d.rows.slice(0, 300).map(r => `<tr><td class="mono">${esc(r.id)}</td>${d.sensors.map(k => `<td class="n">${r.rd[k] == null ? '–' : fmtNum(r.rd[k], PARAMS[k]?.dp ?? 2)}</td>`).join('')}${ids.map(id => { const s = r.resAll?.find(x => x.compound === id);
-      return !s ? '<td>–</td>' : !s.ok ? `<td class="tiny" title="${esc(s.message)}">needs data</td>` : `<td><span class="pill ${s.flag ? 'bad' : 'ok'}" title="level ${fmtConc(s.estimate.value, id)} (${fmtConc(s.estimate.low, id)}–${fmtConc(s.estimate.high, id)}) · confidence ${s.confidence}">${s.flag ? 'Send to lab' : 'No test'} ${stuPct(s.p_high)}</span></td>`; }).join('')}</tr>`).join('');
+      return !s ? '<td>–</td>' : !s.ok ? `<td class="tiny" title="${esc(s.message)}">needs data</td>` : `<td>${mlAlertPill(s.alert || (s.flag ? 'red' : 'green'), `chance ${stuPct(s.p_high)} · level ${fmtConc(s.estimate.value, id)} (${fmtConc(s.estimate.low, id)}–${fmtConc(s.estimate.high, id)}) · confidence ${s.confidence}`)} <span class="tiny">${stuPct(s.p_high)}</span></td>`; }).join('')}</tr>`).join('');
   }
   $('#upNote').textContent = `${d.name} · ${d.rows.length > 300 ? 'first 300 rows shown; the download has all ' + d.rows.length.toLocaleString() : d.rows.length + ' rows'} · ${d.how === 'api' ? 'screened by the online ML API' : 'screened in this browser'} · the level is a rough estimate; the lab result is the reference.`;
 }
@@ -336,15 +341,15 @@ function upResultsCsv(){
   const q = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   let head = [...d.hdr], lines;
   if(d.evalMode){
-    head = head.concat(['model_compound', 'p_high', 'flag_send_to_lab', 'lab_high', 'verdict', 'level_estimate_ugL', 'level_low_ugL', 'level_high_ugL', 'confidence']);
+    head = head.concat(['model_compound', 'p_high', 'alert', 'flag_send_to_lab', 'lab_high', 'verdict', 'level_estimate_ugL', 'level_low_ugL', 'level_high_ugL', 'confidence']);
     lines = d.rows.map(r => { const s = r.res, hi = r.cid ? (!r.below && r.conc >= S.models[r.cid].threshold) : null;
       const v = s && s.ok ? (s.flag === hi ? (hi ? 'both high' : 'both low') : (hi ? 'missed high' : 'false alarm')) : (s?.message || '');
-      return d.hdr.map(h => q(r.raw[h])).concat([r.cid || '', s?.ok ? s.p_high.toFixed(4) : '', s?.ok ? (s.flag ? 'yes' : 'no') : '', hi == null ? '' : hi ? 'yes' : 'no', v,
+      return d.hdr.map(h => q(r.raw[h])).concat([r.cid || '', s?.ok ? s.p_high.toFixed(4) : '', s?.ok ? (s.alert || '') : '', s?.ok ? (s.flag ? 'yes' : 'no') : '', hi == null ? '' : hi ? 'yes' : 'no', v,
         s?.ok ? s.estimate.value.toPrecision(4) : '', s?.ok ? s.estimate.low.toPrecision(3) : '', s?.ok ? s.estimate.high.toPrecision(3) : '', s?.confidence || '']).join(','); });
   } else {
-    for(const id of d.ids) head.push(`${id}_p_high`, `${id}_send_to_lab`, `${id}_level_ugL`, `${id}_confidence`);
+    for(const id of d.ids) head.push(`${id}_p_high`, `${id}_alert`, `${id}_send_to_lab`, `${id}_level_ugL`, `${id}_confidence`);
     lines = d.rows.map(r => d.hdr.map(h => q(r.raw[h])).concat(d.ids.flatMap(id => { const s = r.resAll?.find(x => x.compound === id);
-      return s && s.ok ? [s.p_high.toFixed(4), s.flag ? 'yes' : 'no', s.estimate.value.toPrecision(4), s.confidence] : ['', '', '', q(s?.message || '')]; })).join(','));
+      return s && s.ok ? [s.p_high.toFixed(4), s.alert || '', s.flag ? 'yes' : 'no', s.estimate.value.toPrecision(4), s.confidence] : ['', '', '', '', q(s?.message || '')]; })).join(','));
   }
   return head.map(q).join(',') + '\n' + lines.join('\n') + '\n';
 }
@@ -382,9 +387,9 @@ function renderModels(full){
     const m = S.models[id], sh = m.screenHold || {}, off = STU.off.has(id);
     return `<div class="mcard ${off ? 'dim' : ''}"><div class="flowrow"><span class="dotc" style="background:${MED_COL[i % MED_COL.length]}"></span><b style="font-size:16px">${esc(stuShort(id))}</b><span class="sp"></span>
       <label class="chk"><input type="checkbox" data-med="${id}" ${off ? '' : 'checked'}> screen</label></div>
-      <div class="tiny">${esc(S.compounds[id]?.cls || '')} · "high" above ${fmtConc(m.threshold, id)} · flag when chance ≥ ${stuPct(m.pThr)}</div>
+      <div class="tiny">${esc(S.compounds[id]?.cls || '')} · "high" above ${fmtConc(m.threshold, id)} · 🔴 red (send to lab) ≥ ${stuPct(m.pThr)} · 🟠 amber (watch) ≥ ${stuPct(m.pAmber)}</div>
       <div class="stats"><div><span>ROC-AUC</span><b>${sh.auc != null ? sh.auc.toFixed(2) : '–'}</b><i>testing</i></div><div><span>Precision</span><b>${stuPct(sh.hit_rate)}</b><i>random ${stuPct(sh.base_rate)}</i></div><div><span>Recall</span><b>${stuPct(sh.caught_share)}</b><i>high caught</i></div></div>
-      <div class="tiny">Sensors: ${m.feats.map(f => esc(PARAMS[f]?.label || f)).join(', ')}${m.chosen?.screening ? ` · depth ${m.chosen.screening.max_depth}, leaf ${m.chosen.screening.min_samples_leaf}` : ''}</div></div>`;
+      <div class="tiny">Sensors: ${m.feats.map(f => esc(PARAMS[f]?.label || f)).join(', ')}${m.season ? ' + season (month of the reading)' : ''} · screening model: ${esc(mlKindLabel(m))}</div></div>`;
   }).join('') : '<div class="empty">No model loaded.</div>';
   renderMlAlgos('#mdlAlgoTable', '#mdlAlgoNote');
 }
@@ -428,9 +433,10 @@ async function renderResults(full){
     [one ? 'ROC-AUC' : 'Mean ROC-AUC', (one ? E.auc : D.mAUC).toFixed(2), '0.5 = coin flip'],
     ['Precision', stuPct(sc.precision), `random ${stuPct(sc.rand.precision)} · ${(sc.precision / sc.rand.precision).toFixed(1)}× better`],
     ['Recall', stuPct(sc.recall), `random ${stuPct(sc.rand.recall)}`],
-    ['F1', sc.f1.toFixed(2), `random ${sc.rand.f1.toFixed(2)}`]].map(([a, b, c]) => `<div><span>${a}</span><b>${b}</b><span class="tiny" style="display:block">${esc(c)}</span></div>`).join('');
+    ['F1', sc.f1.toFixed(2), `random ${sc.rand.f1.toFixed(2)}`],
+    ['🟠 Amber (watch)', (one ? E.nAmber : ids.reduce((t, id) => t + D.per[id].nAmber, 0)).toLocaleString(), 'next 5%: second reading, no lab test']].map(([a, b, c]) => `<div><span>${a}</span><b>${b}</b><span class="tiny" style="display:block">${esc(c)}</span></div>`).join('');
   $('#resCm').innerHTML = stuCmHtml(cm);
-  $('#resCmNote').textContent = `${one ? stuShort(STU.resMed) : 'All 5 medicines'} · testing set`;
+  $('#resCmNote').textContent = `${one ? stuShort(STU.resMed) : 'All 5 medicines'} · testing set · flag = 🔴 red alert (send to lab)`;
   $('#resGauges').innerHTML = stuGauge('Accuracy', sc.accuracy, sc.rand.accuracy, v => stuPct(v), 'looks good, says little')
     + stuGauge('Precision', sc.precision, sc.rand.precision, v => stuPct(v), 'flagged that were high')
     + stuGauge('Recall', sc.recall, sc.rand.recall, v => stuPct(v), 'high ones we flagged')
@@ -444,23 +450,23 @@ async function renderResults(full){
   stuDrawPvr('resPvr', show.map(id => { const e = D.per[id]; const k = e.below.map((b, i) => b ? -1 : i).filter(i => i >= 0); return {label: stuShort(id), color: MED_COL[ids.indexOf(id) % MED_COL.length], real: k.map(i => e.real[i]), pred: k.map(i => e.pred[i])}; }));
   $('#resPvrNote').textContent = `Lab-detected samples only (${show.reduce((s, id) => s + D.per[id].nDet, 0).toLocaleString()}). Within 2× of the lab: ${show.map(id => `${stuShort(id)} ${stuPct(D.per[id].within2)}`).join(' · ')}. The level is rough, so the website shows it as a range.`;
   if(one){ const e = E, m = S.models[STU.resMed];
-    stuDrawPvc('resPvc', e.p.map((p, i) => ({x: e.real[i], y: p, kind: e.below[i] ? 'below' : e.f[i] ? 'flag' : 'ok'})), {vx: m.threshold, hy: m.pThr, xTitle: `Real level, lab-measured (µg/L) · "high" ≥ ${fmtConc(m.threshold, STU.resMed)}`, yTitle: 'Predicted chance of "high"'});
-    $('#resPvcNote').textContent = 'Green line = "high" level (lab). Dashed line = flag line. Top-right: correct flags · top-left: false alarms · bottom-right: missed · bottom-left: correctly skipped.'; }
-  else { const pts = []; ids.forEach(id => { const e = D.per[id], m = S.models[id]; e.p.forEach((p, i) => pts.push({x: Math.max(e.real[i], 1e-9) / m.threshold, y: p / m.pThr, kind: e.below[i] ? 'below' : e.f[i] ? 'flag' : 'ok', label: stuShort(id) + ':'})); });
-    stuDrawPvc('resPvc', pts, {vx: 1, hy: 1, yMax: Math.max(...pts.map(p => p.y)) * 1.02, yScale: 1, xTitle: 'Real level ÷ "high" level (right of 1 = high)', yTitle: 'Chance ÷ flag line (above 1 = flagged)'});
-    $('#resPvcNote').textContent = 'All medicines on one scale. Right of the green line = really high; above the dashed line = flagged. Pick one medicine above for its own units.'; }
+    stuDrawPvc('resPvc', e.p.map((p, i) => ({x: e.real[i], y: p, kind: e.below[i] ? 'below' : e.f[i] ? 'flag' : e.am[i] ? 'watch' : 'ok'})), {vx: m.threshold, hy: m.pThr, ha: m.pAmber, xTitle: `Real level, lab-measured (µg/L) · "high" ≥ ${fmtConc(m.threshold, STU.resMed)}`, yTitle: 'Predicted chance of "high"'});
+    $('#resPvcNote').textContent = 'Green line = "high" level (lab). Red dashed line = red alert (send to lab); orange dotted line = amber (watch). Top-right: correct flags · top-left: false alarms · bottom-right: missed · bottom-left: correctly skipped.'; }
+  else { const pts = []; ids.forEach(id => { const e = D.per[id], m = S.models[id]; e.p.forEach((p, i) => pts.push({x: Math.max(e.real[i], 1e-9) / m.threshold, y: p / m.pThr, kind: e.below[i] ? 'below' : e.f[i] ? 'flag' : e.am[i] ? 'watch' : 'ok', label: stuShort(id) + ':'})); });
+    stuDrawPvc('resPvc', pts, {vx: 1, hy: 1, yMax: Math.max(...pts.map(p => p.y)) * 1.02, yScale: 1, xTitle: 'Real level ÷ "high" level (right of 1 = high)', yTitle: 'Chance ÷ red line (above 1 = red alert)'});
+    $('#resPvcNote').textContent = 'All medicines on one scale. Right of the green line = really high; above the red line = red alert (send to lab); orange points = amber (watch). Pick one medicine above for its own units.'; }
   // curves
   const dsCurve = (key, xy) => show.map(id => { const e = D.per[id], c = MED_COL[ids.indexOf(id) % MED_COL.length];
     return {label: `${stuShort(id)} (${key === 'pr' ? 'AP ' + e.ap.toFixed(2) : 'AUC ' + e.auc.toFixed(2)})`, data: thin(e[key]).map(([a, b]) => ({x: a, y: b})), showLine: true, borderColor: c, backgroundColor: c, pointRadius: 0, borderWidth: 1.8, stepped: key === 'pr' ? false : false}; });
   const prD = dsCurve('pr'); show.forEach(id => { const e = D.per[id]; prD.push({label: '', data: [{x: e.recall, y: e.precision}], backgroundColor: MED_COL[ids.indexOf(id) % MED_COL.length], pointRadius: 5, pointStyle: 'circle'}); });
-  chart('resPr', {type: 'scatter', data: {datasets: prD}, options: baseOpts({interaction: {mode: 'nearest', intersect: false}, plugins: {legend: {labels: {filter: it => !!it.text}}, tooltip: {callbacks: {label: c => `${c.dataset.label || 'flag line'}: recall ${(c.raw.x * 100).toFixed(0)}%, precision ${(c.raw.y * 100).toFixed(0)}%`}}},
+  chart('resPr', {type: 'scatter', data: {datasets: prD}, options: baseOpts({interaction: {mode: 'nearest', intersect: false}, plugins: {legend: {labels: {filter: it => !!it.text}}, tooltip: {callbacks: {label: c => `${c.dataset.label || 'red line'}: recall ${(c.raw.x * 100).toFixed(0)}%, precision ${(c.raw.y * 100).toFixed(0)}%`}}},
     scales: {x: linAxis('Recall: share of truly high samples flagged', 0, 1), y: linAxis('Precision: share of flagged samples truly high', 0, 1)}})});
   const rocD = dsCurve('roc'); rocD.push({type: 'line', label: 'coin flip', data: [{x: 0, y: 0}, {x: 1, y: 1}], borderColor: css('--fg-3'), borderDash: [5, 4], borderWidth: 1, pointRadius: 0});
   chart('resRoc', {type: 'scatter', data: {datasets: rocD}, options: baseOpts({interaction: {mode: 'nearest', intersect: false}, plugins: {tooltip: {callbacks: {label: c => `${c.dataset.label}: false alarms ${(c.raw.x * 100).toFixed(0)}%, caught ${(c.raw.y * 100).toFixed(0)}%`}}},
     scales: {x: linAxis('False-alarm rate (share of low samples flagged)', 0, 1), y: linAxis('Catch rate (share of high samples flagged)', 0, 1)}})});
   // sensor importance
   $('#resImp').innerHTML = show.map(id => { const m = S.models[id]; const mx = Math.max(...m.importance.map(i => i.v), 1e-9);
-    return `<div class="impgrp"><div class="small" style="margin:6px 0 2px"><b>${esc(stuShort(id))}</b></div>` + m.importance.map(i => `<div class="r"><span>${esc(PARAMS[i.f]?.label || i.f)}</span><div class="track"><i style="left:0;width:${i.v / mx * 100}%;background:${MED_COL[ids.indexOf(id) % MED_COL.length]}"></i></div><span class="v">${(i.v * 100).toFixed(0)}%</span></div>`).join('') + '</div>'; }).join('');
+    return `<div class="impgrp"><div class="small" style="margin:6px 0 2px"><b>${esc(stuShort(id))}</b></div>` + m.importance.map(i => `<div class="r"><span>${esc(PARAMS[i.f]?.label || EXTRA_FEATS[i.f] || i.f)}</span><div class="track"><i style="left:0;width:${i.v / mx * 100}%;background:${MED_COL[ids.indexOf(id) % MED_COL.length]}"></i></div><span class="v">${(i.v * 100).toFixed(0)}%</span></div>`).join('') + '</div>'; }).join('');
   renderMlAlgos('#resAlgoTable', '#resAlgoNote');
 }
 $('#resSeg')?.addEventListener('click', e => { const b = e.target.closest('[data-med]'); if(!b) return; STU.resMed = b.dataset.med; renderResults(false); });

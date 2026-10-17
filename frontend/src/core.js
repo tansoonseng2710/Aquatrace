@@ -28,7 +28,7 @@ const PARAMS = {
   conductivity:{label:'Conductivity', short:'Cond.', unit:'µS/cm', dp:0},
   do:{label:'Dissolved O₂', short:'DO', unit:'mg/L', dp:2},
 };
-const EXTRA_FEATS = {hour_sin:'Time of day (sin)', hour_cos:'Time of day (cos)', lat:'Latitude', lon:'Longitude'};
+const EXTRA_FEATS = {hour_sin:'Time of day (sin)', hour_cos:'Time of day (cos)', lat:'Latitude', lon:'Longitude', season:'Season (month)'};
 const UNIT_TO_UG = {'ng/L':1e-3,'µg/L':1,'ug/L':1,'mg/L':1e3,'particles/L':1};
 
 /* ---------- utils ---------- */
@@ -289,7 +289,7 @@ function featVec(src, feats){ return feats.map(f=>src[f]); }
 function estimateReading(r){
   r.est = r.est || {};
   const src = {...r, hour_sin:Math.sin(2*Math.PI*new Date(r.ts).getHours()/24), hour_cos:Math.cos(2*Math.PI*new Date(r.ts).getHours()/24)};
-  for(const [c,m] of Object.entries(S.models)){ if(!m || !m.final) continue; const x=featVec(src, m.feats); if(x.every(v=>v!=null && isFinite(v))) r.est[c] = predictWithUncertainty(m, x); else delete r.est[c]; }   // no estimate without every model input
+  for(const [c,m] of Object.entries(S.models)){ if(!m || !m.final) continue; const x=featVec(src, m.feats); if(x.every(v=>v!=null && isFinite(v))) r.est[c] = predictWithUncertainty(m, x, r); else delete r.est[c]; }   // no estimate without every model input
   const tgt = CFG.target, e = r.est[tgt], lvl = S.compounds[tgt]?.level;
   let st='ok';
   if(r.maxZ>=CFG.zTh) st='warn';

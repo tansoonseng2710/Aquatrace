@@ -9,6 +9,9 @@
    If the service cannot be reached, the copy bundled in models/ is used and the page says so.
    ============================================================ */
 const ASK_KEYS = ['ph', 'temp', 'conductivity', 'turbidity', 'do'];
+// What the API receives for one reading: the 5 sensors plus the month (season input), worked out here so the
+// online answer and this page always use the same month.
+function mlPayload(r){ const o = {}; for(const k of ASK_KEYS){ const v = r?.[k]; o[k] = v == null || v === '' || !isFinite(+v) ? null : +v; } o.month = mlMonth(r); return o; }
 const MLAPI = {
   base: '', state: 'idle', health: null, pkg: null, saved: null, evaluation: null, lastMs: null, err: '', tried: [], retries: 0, timer: null,
   candidates(){
@@ -52,8 +55,8 @@ const MLAPI = {
     mlApiShow(); await mlApiUseSaved();
     return false;
   },
-  predict(readings, compounds){ return MLAPI.req(MLAPI.base, '/predict', {body: {readings, compounds: compounds || null}, timeout: 30000}); },
-  batch(items, compounds){ return MLAPI.req(MLAPI.base, '/predict/batch', {body: {items, compounds: compounds || null}, timeout: 90000}); },
+  predict(readings, compounds){ return MLAPI.req(MLAPI.base, '/predict', {body: {readings: mlPayload(readings), compounds: compounds || null}, timeout: 30000}); },
+  batch(items, compounds){ return MLAPI.req(MLAPI.base, '/predict/batch', {body: {items: items.map(mlPayload), compounds: compounds || null}, timeout: 90000}); },
 };
 
 /* Load the online model into the page (after boot, and again whenever the page reloads its data). */
@@ -123,21 +126,23 @@ function mlAskRows(results, how){
     const sens = (o.sensors_used || []).map(f => esc(PARAMS[f]?.short || PARAMS[f]?.label || f)).join(', ');
     if(!o.ok) return `<tr><td><b>${name}</b></td><td>${sens}</td><td colspan="4" class="muted">${esc(o.message || 'Missing readings')}</td></tr>`;
     const est = o.estimate, unit = est.unit || 'µg/L', f = v => S.compounds[o.compound] ? fmtConc(v, o.compound) : `${(+v).toPrecision(2)} ${unit}`;
-    return `<tr><td><b>${name}</b></td><td>${sens}</td><td class="n"><b>${pct(o.p_high)}</b> <span class="tiny">flag at ${pct(o.flag_line)}</span></td>
-      <td><span class="pill ${o.flag ? 'bad' : 'ok'}">${o.flag ? 'Send to lab' : 'No test needed'}</span></td>
+    const al = o.alert || (o.flag ? 'red' : 'green');
+    return `<tr><td><b>${name}</b></td><td>${sens}</td><td class="n"><b>${pct(o.p_high)}</b> <span class="tiny">red ≥ ${pct(o.flag_line)}${o.amber_line != null && o.amber_line < o.flag_line ? ` · amber ≥ ${pct(o.amber_line)}` : ''}</span></td>
+      <td>${mlAlertPill(al)}</td>
       <td class="n">${f(est.value)} <span class="tiny">${f(est.low)}–${f(est.high)}</span></td>
       <td><span class="pill ${o.confidence === 'High' ? 'ok' : o.confidence === 'Medium' ? 'warn' : 'bad'}" title="${esc((o.reasons || []).join('; '))}">${esc(o.confidence)}</span></td></tr>`;
   }).join('');
-  const n = results.filter(o => o.ok && o.flag).length;
-  $('#mlAskMeta').innerHTML = `${how} · ${n ? `<b>${n} of ${results.length}</b> medicines flagged: send this sample to the lab for ${results.filter(o => o.ok && o.flag).map(o => esc(mlShortName(o.compound))).join(', ')}` : 'no medicine flagged: no lab test needed for this sample'}. The level is a rough estimate; the lab result is the reference.`;
+  const red = results.filter(o => o.ok && o.flag), amb = results.filter(o => o.ok && !o.flag && o.alert === 'amber');
+  const names = a => a.map(o => esc(mlShortName(o.compound))).join(', ');
+  $('#mlAskMeta').innerHTML = `${how} · ${red.length ? `🔴 <b>send this sample to the lab</b> for ${names(red)}` : 'no red alert: no lab test needed for this sample'}${amb.length ? ` · 🟠 watch this spot for ${names(amb)} (take a second reading)` : ''}. The level is a rough estimate; the lab result is the reference.`;
 }
 function mlAskLocal(readings){   // same model, run in this browser: used when the online API is not reachable
   return mlModelIds().map(id => {
     const m = S.models[id]; const missing = m.feats.filter(f => readings[f] == null || !isFinite(readings[f]));
     const base = {compound: id, name: S.compounds[id]?.name, sensors_used: m.feats};
     if(missing.length) return {...base, ok: false, message: 'Needs ' + missing.map(f => PARAMS[f]?.label || f).join(', ')};
-    const e = predictWithUncertainty(m, m.feats.map(f => readings[f]));
-    return {...base, ok: true, p_high: e.p, flag: e.flag, flag_line: m.pThr, confidence: e.conf, reasons: e.reasons,
+    const e = predictWithUncertainty(m, m.feats.map(f => readings[f]), readings);
+    return {...base, ok: true, p_high: e.p, flag: e.flag, alert: e.alert, flag_line: m.pThr, amber_line: m.pAmber, confidence: e.conf, reasons: e.reasons,
       estimate: {value: e.mu, low: e.lo, high: e.hi, unit: S.compounds[id]?.unit || 'µg/L'}};
   });
 }
@@ -167,10 +172,10 @@ async function mlApiNow(comp){
   const key = comp + '|' + r.ts; if(key === mlNowKey && el.dataset.done) return; mlNowKey = key;
   el.innerHTML = '<span class="tiny">asking…</span>';
   try{
-    const res = (await MLAPI.predict(Object.fromEntries(m.feats.map(f => [f, r[f]])), [comp])).results[0];
-    const local = m.final.screen(x), same = Math.abs(local - res.p_high) < 2e-6;
+    const res = (await MLAPI.predict({...Object.fromEntries(m.feats.map(f => [f, r[f]])), ts: r.ts}, [comp])).results[0];
+    const local = m.final.screen(x, r), same = Math.abs(local - res.p_high) < 2e-6;
     el.dataset.done = '1';
-    el.innerHTML = `<span class="pill ${res.flag ? 'bad' : 'ok'}">${res.flag ? 'Send to lab' : 'No test needed'}</span> <span class="tiny">P(high) ${(res.p_high * 100).toFixed(1)}% · ${Math.round(MLAPI.lastMs)} ms${same ? ' · same as this page ✓' : ' · differs from this page: reload the model'}</span>`;
+    el.innerHTML = `${mlAlertPill(res.alert || (res.flag ? 'red' : 'green'))} <span class="tiny">P(high) ${(res.p_high * 100).toFixed(1)}% · ${Math.round(MLAPI.lastMs)} ms${same ? ' · same as this page ✓' : ' · differs from this page: reload the model'}</span>`;
   }catch(e){ el.innerHTML = `<span class="tiny">online check failed: ${esc(e.message)}</span>`; }
 }
 
@@ -186,11 +191,11 @@ async function mlVerify(){
     for(const cid of Object.keys(MLAPI.pkg.models)){
       const m = S.models[cid], pm = MLAPI.pkg.models[cid]; if(!m) continue;
       const R = rows.filter(r => r.compound === cid);
-      const items = R.map(r => Object.fromEntries(m.feats.map(f => [f, r[f] === '' || r[f] == null ? null : +r[f]])));
+      const items = R.map(r => ({...Object.fromEntries(m.feats.map(f => [f, r[f] === '' || r[f] == null ? null : +r[f]])), timestamp: r.timestamp}));
       for(let i = 0; i < items.length; i += 5000){
         const res = (await MLAPI.batch(items.slice(i, i + 5000), [cid])).results;
         res.forEach((o, k) => { const it = items[i + k], row = R[i + k]; if(!o[0].ok) return;
-          const d = Math.abs(m.final.screen(m.feats.map(f => it[f])) - o[0].p_high); maxd = Math.max(maxd, d); n++; if(d < 2e-6) same++;
+          const d = Math.abs(m.final.screen(m.feats.map(f => it[f]), it) - o[0].p_high); maxd = Math.max(maxd, d); n++; if(d < 2e-6) same++;
           const high = row.concentration !== '<LOD' && +row.concentration >= pm.threshold, flag = o[0].flag;
           cm[flag ? (high ? 'tp' : 'fp') : (high ? 'fn' : 'tn')]++; });
       }

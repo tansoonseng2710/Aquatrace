@@ -26,9 +26,10 @@ uses the copy of the same model saved in `frontend/models/` and says so in the t
      *Connected to http://localhost:7860* (no internet: the laptop API takes over).
 3. Try it:
    - **Ask the online model** → *Use latest boat reading* → *Ask the model*: one row per medicine with P(high),
-     **Send to lab / No test needed**, level range and confidence.
+     an alert (🔴 **red** = send to lab · 🟠 **amber** = watch, take a second reading · green = no test needed),
+     level range and confidence.
    - *Check the online model on 5,248 testing-set lab results* → expect
-     **5,248 of 5,248 … same as Colab ✓** (TP 166 · FP 445 · FN 283 · TN 4,354).
+     **5,248 of 5,248 … same as Colab ✓** (red alerts: TP 117 · FP 251 · FN 332 · TN 4,548).
    - **Which algorithm? 7 compared**: random forest is marked *chosen*; the dummy that never flags anything has
      the highest accuracy (91%) and finds nothing, which is why we choose by mAP.
    - The API's own test page: http://localhost:7860/docs → `POST /predict` → *Try it out* → *Execute*
