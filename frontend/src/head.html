@@ -281,6 +281,8 @@ tbody tr.click{cursor:pointer} tbody tr.click:hover td{background:var(--panel-2)
 .hbars .track i{position:absolute;top:0;bottom:0;background:var(--s1);border-radius:99px}
 .hbars .track i.neg{background:var(--fg-3)}
 .hbars .track .mid{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--fg-3)}
+.hbars.impcols{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr));gap:12px 32px;align-items:start}
+.impgrp{display:flex;flex-direction:column;gap:7px;min-width:0}
 .toast{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:var(--r);font-size:14px;z-index:1000;max-width:min(420px,calc(100vw - 32px));box-shadow:var(--shadow)}
 .flowrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .flowrow .stage{border-radius:var(--r-sm);padding:12px 16px;background:var(--panel-2);min-width:130px;flex:1 1 150px}

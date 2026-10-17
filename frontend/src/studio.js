@@ -460,7 +460,7 @@ async function renderResults(full){
     scales: {x: linAxis('False-alarm rate (share of low samples flagged)', 0, 1), y: linAxis('Catch rate (share of high samples flagged)', 0, 1)}})});
   // sensor importance
   $('#resImp').innerHTML = show.map(id => { const m = S.models[id]; const mx = Math.max(...m.importance.map(i => i.v), 1e-9);
-    return `<div class="small" style="margin:6px 0 2px"><b>${esc(stuShort(id))}</b></div>` + m.importance.map(i => `<div class="r"><span>${esc(PARAMS[i.f]?.label || i.f)}</span><div class="track"><i style="left:0;width:${i.v / mx * 100}%;background:${MED_COL[ids.indexOf(id) % MED_COL.length]}"></i></div><span class="v">${(i.v * 100).toFixed(0)}%</span></div>`).join(''); }).join('');
+    return `<div class="impgrp"><div class="small" style="margin:6px 0 2px"><b>${esc(stuShort(id))}</b></div>` + m.importance.map(i => `<div class="r"><span>${esc(PARAMS[i.f]?.label || i.f)}</span><div class="track"><i style="left:0;width:${i.v / mx * 100}%;background:${MED_COL[ids.indexOf(id) % MED_COL.length]}"></i></div><span class="v">${(i.v * 100).toFixed(0)}%</span></div>`).join('') + '</div>'; }).join('');
   renderMlAlgos('#resAlgoTable', '#resAlgoNote');
 }
 $('#resSeg')?.addEventListener('click', e => { const b = e.target.closest('[data-med]'); if(!b) return; STU.resMed = b.dataset.med; renderResults(false); });

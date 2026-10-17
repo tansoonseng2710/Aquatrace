@@ -300,6 +300,7 @@
       <div class="panel"><div class="ph"><h2>Confusion matrix</h2><span class="tools tiny" id="resCmNote"></span></div><div id="resCm"></div></div>
       <div class="panel"><div class="ph"><h2>Accuracy · precision · recall · F1</h2><span class="tools tiny">red tick = random picks, same lab budget</span></div><div class="gauges" id="resGauges"></div></div>
     </div>
+    <div class="panel"><div class="ph"><h2>Which sensor matters</h2><span class="tools tiny">permutation importance, testing sites</span></div><div class="hbars impcols" id="resImp"></div></div>
     <div class="panel"><div class="ph"><h2>Per medicine</h2><span class="tools tiny">testing set · lift = precision ÷ random</span></div>
       <div class="tw"><table><thead><tr><th>Medicine</th><th class="n">Lab results</th><th class="n">TP</th><th class="n">FP</th><th class="n">FN</th><th class="n">TN</th><th class="n">Precision</th><th class="n">Recall</th><th class="n">F1</th><th class="n">ROC-AUC</th><th class="n">AP</th><th class="n">Lift</th><th class="n">Level within 2×</th></tr></thead><tbody id="resTable"></tbody></table></div></div>
     <div class="grid g2">
@@ -310,10 +311,7 @@
       <div class="panel"><div class="ph"><h2>Precision–recall curves</h2><span class="tools tiny">dot = our flag line</span></div><div class="chart tall"><canvas id="resPr"></canvas></div><div class="tiny">Higher and further right is better. AP = area under the curve; mAP = average over the medicines.</div></div>
       <div class="panel"><div class="ph"><h2>ROC curves</h2><span class="tools tiny">dashed = coin flip</span></div><div class="chart tall"><canvas id="resRoc"></canvas></div><div class="tiny">The further above the dashed line, the better the model separates high from low water.</div></div>
     </div>
-    <div class="grid g2">
-      <div class="panel"><div class="ph"><h2>Which sensor matters</h2><span class="tools tiny">permutation importance, testing sites</span></div><div class="hbars" id="resImp"></div></div>
-      <div class="panel"><div class="ph"><h2>Which algorithm? 7 compared</h2></div><div class="tw"><table><thead><tr><th>Algorithm</th><th>Cross-validation mAP <span class="nu">(we choose by this)</span></th><th class="n">CV mAP</th><th class="n">Test accuracy</th><th class="n">Precision</th><th class="n">Recall</th><th class="n">F1</th><th class="n">Test mAP</th></tr></thead><tbody id="resAlgoTable"></tbody></table></div><div class="small muted" id="resAlgoNote"></div></div>
-    </div>
+    <div class="panel"><div class="ph"><h2>Which algorithm? 7 compared</h2></div><div class="tw"><table><thead><tr><th>Algorithm</th><th>Cross-validation mAP <span class="nu">(we choose by this)</span></th><th class="n">CV mAP</th><th class="n">Test accuracy</th><th class="n">Precision</th><th class="n">Recall</th><th class="n">F1</th><th class="n">Test mAP</th></tr></thead><tbody id="resAlgoTable"></tbody></table></div><div class="small muted" id="resAlgoNote"></div></div>
   </section>
 
   <!-- 06 ML -->
